@@ -1,0 +1,29 @@
+variable,source_column,coding
+lid_des1,lid_des1,Ordered levels 1-4; source 0-3 shifted +1 when detected
+lid_des2,lid_des2,Ordered levels 1-4; source 0-3 shifted +1 when detected
+lid_des4,lid_des4,Ordered levels 1-4; source 0-3 shifted +1 when detected
+lid_des5,lid_des5,Ordered levels 1-4; source 0-3 shifted +1 when detected
+lid_des6,lid_des6,Ordered levels 1-4; source 0-3 shifted +1 when detected
+lid_des7,lid_des7,Ordered levels 1-4; source 0-3 shifted +1 when detected
+lid_des8,lid_des8,Ordered levels 1-4; source 0-3 shifted +1 when detected
+lid_des9,lid_des9,Ordered levels 1-4; source 0-3 shifted +1 when detected
+lid_des10,lid_des10,Ordered levels 1-4; source 0-3 shifted +1 when detected
+lid_des11,lid_des11,Ordered levels 1-4; source 0-3 shifted +1 when detected
+lid_des12,lid_des12,Ordered levels 1-4; source 0-3 shifted +1 when detected
+lid_des13,lid_des13,Ordered levels 1-4; source 0-3 shifted +1 when detected
+lid_des14,lid_des14,Ordered levels 1-4; source 0-3 shifted +1 when detected
+sex_woman,a52,1 = Women; 0 = other observed levels
+eri,desbalance_dic,1 = Yes; 0 = other observed levels
+naq_frequent,naq_a,1 = 2; 0 = other observed levels
+bully_self,autonaq,1 = Yes; 0 = other observed levels
+sex_harass,acos_sex,1 = 2; 0 = other observed levels
+auditc_hazard,auditc,1 = Yes; 0 = other observed levels
+no_union,org_sind,1 = Yes; 0 = other observed levels
+unpaid_care,carga_dom,1 = Yes; 0 = other observed levels
+no_secondary,educacion_media,1 = Yes; 0 = other observed levels
+small_wp,tamano_de_la_empresa,1 = 1 to 10; 0 = other observed levels
+customer_no,atpub,1 = Job w/o customer-facing tasks; 0 = other observed levels
+econ_narrow,estrechez,1 = 2; 0 = other observed levels
+age,a53,"Numeric, original score units"
+job_sat,satis,"Numeric, original score units"
+.w,weight,Positive survey weight

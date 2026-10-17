@@ -1,0 +1,334 @@
+---
+title: "Leadership profiles and occupational health in Chile"
+subtitle: "A reader's guide to the analyses, evidence, and reproducible workflow"
+author:
+  - name: Andrés González-Santa Cruz
+    orcid: 0000-0002-5166-9121
+    email: gonzalez.santacruz.andres@gmail.com
+    affiliations:
+      - name: Departamento de Salud Pública, Facultad de Medicina, Universidad San Sebastián
+        city: Santiago
+        country: Chile
+  - name: Elisa Ansoleaga
+    orcid: 0000-0003-0182-0126
+    email: maria.ansoleaga@udp.cl
+    affiliations:
+      - name: Programa de Estudios Psicosociales del Trabajo, Facultad de Psicología, Universidad Diego Portales
+        city: Santiago
+        country: Chile
+description: "FONDECYT Regular 1170239"
+date: last-modified
+format:
+  html:
+    theme: cosmo
+    css: styles.css
+    toc: true
+    toc-title: "Contents"
+    toc-depth: 2
+    number-sections: false
+    embed-resources: true
+    code-copy: true
+execute:
+  enabled: false
+---
+
+## Start here
+
+This project studies patterns of constructive, destructive, and *laissez-faire*
+leadership in Chilean salaried workers and hospital workers. It accompanies a
+manuscript being prepared for *International Archives of Occupational and
+Environmental Health*.
+
+The project has **two primary questions**:
+
+1. Which leadership profiles can be identified in the general salaried-worker
+   survey, and why retain a four-class solution?
+2. Can the same item-response profiles describe workers in both the general and
+   hospital samples, and how does their prevalence differ between settings?
+
+Characteristics and covariate associations are secondary questions. The hospital
+comparison is a primary part of the study. Sensitivity analyses address specific
+alternative modeling choices after those primary questions have been examined.
+
+**Choose how to read.** Follow the numbered reports below for the scientific
+argument. Open the accompanying `.qmd` source to inspect how a result was produced.
+Use [the export guide](EXPORTS.md) to find the underlying tables and reusable
+objects. The [repository README](README.md) gives a shorter starting point.
+
+::: {.callout-note title="What this directory establishes"}
+The main report and its aggregate exports were refreshed on September 7, 2026,
+using the saved measurement estimates. The multiple-group and Part 2 sources
+received export-only updates, but their linked HTML files remain snapshots of
+earlier runs; their new exports will be written at their next render. The other
+linked reports are also saved snapshots. Their tables
+and output were reviewed for participant-level records before inclusion in the
+public-file allowlist. Check each report's execution settings, class labels,
+diagnostics, and session information together with the relevant export manifest.
+This page itself runs no statistical analysis.
+:::
+
+## Read the analyses in this order
+
+### 1. Identify and characterize the leadership profiles
+
+[Read the main report](leadership_LCA_analysis.html) ·
+[Inspect the source](leadership_LCA_analysis.qmd)
+
+Begin with the measurement model. The analysis uses 13 items from the 14-item
+Constructive-Destructive Leadership Scale. Item 3 is excluded because its wording
+was administered incorrectly. Responses retain four ordered categories. Sex is
+included as a concomitant in this general-sample measurement model.
+
+Read the enumeration table and profile plots together: an information criterion,
+classification quality, minimum class size, and interpretability answer different
+parts of the selection question. The retained four-class model is then used for
+weighted characteristics, classification diagnostics, three-step associations,
+marginal predicted probabilities, and a comparison of modal and BCH estimates.
+
+**Find a number:** [enumeration](table1_enumeration.csv),
+[full Table 2](table2_full_13item.csv),
+[class counts and weighted shares](table2_class_sizes_13item.csv),
+[item-response probabilities](table3_itemprob.csv), and
+[classification diagnostics](table_classification_diagnostics.csv).
+The [export guide](EXPORTS.md) describes the new numeric and provenance exports.
+
+### 2. Evaluate the shared profiles across settings
+
+[Read the multiple-group report](leadership_LCA_multigroup_hospital.html) ·
+[Inspect the source](leadership_LCA_multigroup_hospital.qmd)
+
+This is the second primary axis. The report harmonizes the same 13 items between
+the two samples, compares shared and setting-specific item-response probabilities,
+and examines profile prevalence by setting. Separate within-setting fits provide
+additional context for the shared-profile interpretation.
+
+**Reading key:** measurement invariance concerns the profiles' item-response
+probabilities. It does not require equal class prevalences. The information
+criteria can disagree; inspect the complete comparison rather than interpreting
+one favorable criterion as proof that all measurement differences are absent.
+For the reported differences, the convention is **free minus invariant**: a
+positive difference in BIC favors the invariant model.
+
+**Find a number:** [sample accounting](mg_sample_sizes.csv). The full invariance
+comparison and group-specific prevalences are presented in the report.
+
+### 3. Compare associations between the two samples
+
+[Read Part 2](leadership_LCA_analysis_part2_sample_comparison.html) ·
+[Inspect the source](leadership_LCA_analysis_part2_sample_comparison.qmd)
+
+Part 2 uses the shared four-class measurement model to compare covariate
+associations on a common profile scale. It includes both one-covariate-at-a-time
+ML three-step models and, in Section 5, a mutually adjusted model with eight
+covariates. The latter includes seven binary covariates and job satisfaction,
+standardized within each sample.
+
+**Reading key:** an OR compares a profile with its specified reference within a
+sample. A ratio of odds ratios (ROR) compares that association between samples:
+the direction here is **hospital OR divided by general-sample OR**. Read the
+confidence intervals, multiplicity results, and model diagnostics with the point
+estimates. The surveys are anonymous, so partial participant overlap cannot be
+excluded when interpreting cross-sample uncertainty.
+
+**Find a number:** [numeric unadjusted ROR table](tableS7_ror_values.csv) and
+[formatted unadjusted ROR table](tableS7_ror_formatted.csv). For the adjusted
+eight-covariate comparisons, use Section 5 of the report; Table S7 exports belong
+to the preceding one-covariate-at-a-time models.
+
+### 4. Examine adjustment within the general sample
+
+[Read Part 3](leadership_LCA_analysis_part3_or_adjusted.html) ·
+[Inspect the source](leadership_LCA_analysis_part3_or_adjusted.qmd)
+
+Part 3 compares unadjusted and mutually adjusted ML three-step ORs using the saved
+general-sample measurement model. It also reports covariate correlations and
+collinearity diagnostics. The actual adjustment set contains eight covariates.
+
+**Reading key:** this report uses the general-sample model, whereas Part 2 uses a
+shared multiple-group model. In Part 3, the job-satisfaction OR is per one score
+point; in Part 2's adjusted model, it is per within-sample standard deviation.
+Those coefficients should not be compared as if their units or measurement
+models were identical. The reference profile is identified from the fitted
+profiles; check the report's label and the export filename together.
+
+**Find a number:** [numeric unadjusted and adjusted ORs, reference C3](tableUA_or_values_refC3.csv).
+
+### 5. Check uncertainty about the number of classes
+
+[Read the five- and eight-class sensitivity report](leadership_LCA_8class_sensitivity.html) ·
+[Inspect the source](leadership_LCA_8class_sensitivity.qmd)
+
+Despite its filename, this notebook covers both eight- and five-class solutions.
+It examines alternatives motivated by the information criteria, compares their
+profiles with the retained four-class solution, and studies whether the more
+detailed partition changes the substantive interpretation.
+
+**Reading key:** distinguish additional subdivisions of a broad profile from a
+substantively different pattern. This notebook performs measurement-model fits;
+it is not a display-only transformation of the retained four-class object.
+
+### 6. Examine the role of job satisfaction in adjustment
+
+[Read the seven-covariate sensitivity report](leadership_LCA_part2_adjusted_nojobsat.html) ·
+[Inspect the source](leadership_LCA_part2_adjusted_nojobsat.qmd)
+
+This notebook inherits selected code chunks from Part 2 and compares the
+cross-sample adjusted models with and without job satisfaction. It keeps the
+shared measurement model and the other seven covariates, allowing the change in
+the adjustment set to be examined directly.
+
+**Reading key:** the comparison shows how estimates depend on conditioning on job
+satisfaction. It does not establish a temporal or causal role for that variable
+in these cross-sectional data.
+
+**Find a number:** [seven-covariate estimates](table4_adjusted_nojobsat_values.csv)
+and [eight-versus-seven-covariate comparison](table4_adjusted_8vs7_comparison.csv).
+
+### 7. Trace the publication figures to their saved inputs
+
+[Read the consolidated figure report](Figures_IAOEH_consolidated.html) ·
+[Inspect the source](Figures_IAOEH_consolidated.qmd)
+
+This notebook prepares the four manuscript figures from saved results:
+enumeration, general-sample item-response probabilities, shared invariant
+profiles, and setting-specific prevalence. Figure 1 also uses adjacent-solution
+agreement where the required enumeration assignments are available. Its checks
+connect those assignments to the fitted enumeration results.
+
+**Reading key:** the consolidated Figure 3 depicts shared profiles from the
+invariant model. It is different from the separately fitted profile comparison
+shown in the multiple-group report. Match the figure to the model named in its
+caption.
+
+## Understand the quantities before comparing them
+
+| Quantity | What it represents | Where to check |
+|---|---|---|
+| Analytic `n` | Actual participants included after the stated eligibility and missing-data filters | Sample accounting and class-count exports |
+| Weighted class share | Share of the modal classification after applying survey weights | Table 2 class-size export |
+| Model-estimated class prevalence | Prevalence obtained from the specified latent-class model | Measurement-model output and profile figures |
+| Weighted median and Q1–Q3 | The continuous characteristic's weighted distribution within a modal class | Full Table 2 and numeric summary exports |
+| Table 2 P-value | A global comparison across the four modal classes, using the available survey design | Test-details export described in the export guide |
+| Table 2 SMD | Maximum absolute standardized mean difference across class pairs, using weighted moments | Pairwise export described in the export guide |
+| Three-step OR | A covariate association accounting for classification error through the specified estimator | Model-specific association report |
+
+Counts, weighted shares, and model-estimated prevalence are distinct quantities.
+A P-value alongside a median is based on a distributional/rank comparison, while
+the conventional SMD uses means and variances. Neither should be read as a
+standardized difference between medians. General-sample descriptives use survey
+weights; hospital analyses use weight 1 where no sampling weight is available.
+The currently available general-sample design is weights-only, so its variance
+estimates do not reconstruct unprovided clustering or stratification variables.
+
+## Reproduce the workflow
+
+### Inputs and software
+
+Run commands from the project directory with R and Quarto installed. Each analysis
+notebook declares its required R packages and prints session information. Record
+those versions with a released set of outputs; installing a package today does
+not guarantee the same version used in an earlier report.
+
+The private input files used by the current sources are:
+
+- General survey: `BD_2020_input3_match_not_miss.rds`.
+- Hospital survey: `Base de datos 27.8.2019.dta`.
+
+The main, multiple-group and Part 2 notebooks accept `LCA_RAW_PATH`; the latter
+two also accept `LCA_HOSPITAL_PATH`. They check project-local defaults before
+legacy locations. The remaining notebooks retain their own
+`load-data` configuration, including existing Google Drive paths. Configure
+those paths to point to the authorized local data before running them on another
+computer. Setting `LCA_RAW_PATH` for the main notebook does not automatically
+configure every downstream source.
+
+### Main-table refresh using the existing measurement results
+
+```powershell
+quarto render leadership_LCA_analysis.qmd
+```
+
+The main notebook reuses compatible saved measurement results when available,
+validates their correspondence with the analysis data, and updates the
+descriptive and downstream exports. If no usable saved results exist, a complete
+measurement run is required. This is why a table refresh and a complete
+replication can have very different running times.
+
+For a deliberate fresh measurement fit:
+
+```powershell
+$env:LCA_REFIT = "1"
+quarto render leadership_LCA_analysis.qmd
+Remove-Item Env:\LCA_REFIT
+```
+
+### Full analysis order
+
+The following order produces the main inputs before their consumers. It includes
+measurement fits and secondary association fits; it is not needed merely to read
+the saved reports or rebuild this index.
+
+```powershell
+$env:LCA_REFIT = "1"
+$env:LCA_FINAL = "1"
+quarto render leadership_LCA_analysis.qmd
+Remove-Item Env:\LCA_REFIT
+quarto render leadership_LCA_multigroup_hospital.qmd
+quarto render leadership_LCA_analysis_part2_sample_comparison.qmd
+quarto render leadership_LCA_analysis_part3_or_adjusted.qmd
+quarto render leadership_LCA_8class_sensitivity.qmd
+quarto render leadership_LCA_part2_adjusted_nojobsat.qmd
+quarto render Figures_IAOEH_consolidated.qmd
+Remove-Item Env:\LCA_FINAL
+quarto render index.qmd
+```
+
+The no-job-satisfaction notebook can create `cache_g4_inv_part2.rds`, which the
+consolidated figures consume. Part 2 can also read dated `part2_cache_*.rds`
+objects. Verify that any reused cache matches the intended data, item coding,
+and estimation settings; `LCA_FINAL` does not by itself certify an older cache.
+Some notebooks permit execution to continue after an error, so inspect the
+rendered diagnostics as well as the final output-created message.
+
+### Build only this directory
+
+```powershell
+quarto render index.qmd
+```
+
+This command needs no participant data and does not run the linked notebooks.
+Relative report links work when the HTML reports are kept beside `index.html`.
+The source links remain usable when the `.qmd` files are included alongside them.
+
+## Reuse outputs and prepare a public repository
+
+The [export guide](EXPORTS.md) defines the distinction between public aggregate
+results and private reusable objects. For new notebooks, use
+[the results loader](R/load_leadership_results.R) and the documented schema
+instead of extracting rounded numbers from an HTML table. The
+[Table 2 implementation](R/leadership_table2.R) exposes the descriptive and
+comparison calculations.
+
+`lca_results.rds` is a **private analysis bundle**: it contains participant-level
+posterior probabilities and may contain aligned analysis data and fitted objects.
+The same applies to enumeration assignments, fitted-model caches, and raw survey
+files. These are not public aggregate tables. The separate
+`lca_results_public.rds` contains aggregate results; `output_manifest.csv` records
+export checksums so a released file can be tied to a producing run.
+
+For GitHub, publish the sources, this guide, the export documentation, and the
+reviewed aggregate tables, figures, and reports that belong to the same release.
+Inspect reports for embedded individual records or local-path information before
+publishing. Keep participant-containing files and caches outside the public
+release. Individual-level data are confidential and cannot be made publicly
+available. The investigators permit public release of aggregate results only.
+
+A reader with only the public release can inspect the calculations and compare
+reported numbers with aggregate exports. A researcher with authorized input data
+can additionally rerun the analyses. GitHub renders the README and source files;
+the rendered HTML reports need a website host such as GitHub Pages to open as
+webpages. A repository URL and site deployment can be added once selected.
+
+Older NAQ, alcohol, Stata, and *poLCA* materials in the working folder are
+historical research files. They are outside the current leadership-manuscript
+reading path and should not be mistaken for its final analytical pipeline.

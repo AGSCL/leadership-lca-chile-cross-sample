@@ -1,0 +1,15 @@
+variable,characteristic,method,p_value,max_abs_smd,test_status,test_details
+unpaid_care,Unpaid care work at home -- yes,Rao-Scott F test,7.218172485331595e-4,0.32300057474134675,ok,F=5.67027759; ndf=2.990719322; ddf=5520.867868
+no_secondary,Did not complete secondary school,Rao-Scott F test,0.01715449976293653,0.23251999543805046,ok,F=3.394821695; ndf=2.997658047; ddf=5533.676755
+no_union,Absence of union -- yes,Rao-Scott F test,0.0012438368274148312,0.32438443130994576,ok,F=5.276503306; ndf=2.998566592; ddf=5535.353929
+small_wp,Workplace 1-10 workers,Rao-Scott F test,4.218467524796759e-5,0.355196630869775,ok,F=7.656675265; ndf=2.996924413; ddf=5532.322467
+customer_no,Customer-facing tasks -- no,Rao-Scott F test,0.08171322209615058,0.1987993139499137,ok,F=2.238691344; ndf=2.99688421; ddf=5532.248252
+econ_narrow,Economic narrowness -- yes,Rao-Scott F test,8.209577998121513e-4,0.3043535580404085,ok,F=5.569145596; ndf=2.999912451; ddf=5537.838384
+eri,Effort-reward imbalance -- yes,Rao-Scott F test,4.374733549087877e-17,0.5654601164836183,ok,F=26.62264423; ndf=2.999021344; ddf=5536.193401
+sex_woman,Sex -- women,Rao-Scott F test,0.058799697681895656,0.21066808435374146,ok,F=2.486218493; ndf=2.997301954; ddf=5533.019407
+auditc_hazard,Hazardous alcohol use (AUDIT-C) -- yes,Rao-Scott F test,0.04200491630741063,0.16408866010544407,ok,F=2.737082985; ndf=2.996581705; ddf=5531.689828
+naq_frequent,Frequent negative acts (NAQ) -- yes,Rao-Scott F test,5.009419779662659e-8,0.3682404298400865,ok,F=12.36582443; ndf=2.983739046; ddf=5507.982279
+bully_self,Self-labeled bullying (last 6 mo),Rao-Scott F test,1.9330002301963948e-10,0.3556669745410737,ok,F=16.13906883; ndf=2.998941223; ddf=5536.045497
+sex_harass,Sexual harassment (last 12 mo),Rao-Scott F test,0.03850553170179991,0.1808577586167187,ok,F=2.815754508; ndf=2.955141134; ddf=5455.190534
+age,"Age, median (Q1-Q3), years",Survey-adjusted Kruskal-Wallis rank test,0.2399825431497079,0.16326927991734302,ok,df=3; Chisq=4.21045585
+job_sat,"Job satisfaction, median (Q1-Q3)",Survey-adjusted Kruskal-Wallis rank test,8.631933108169584e-40,0.8780816433803138,ok,df=3; Chisq=194.1880676

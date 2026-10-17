@@ -1,0 +1,1060 @@
+---
+title: "Latent profiles of destructive and laissez-faire leadership in Chilean salaried workers — reproducible analysis"
+description: |
+  Reproducible R workflow for the latent class analysis (LCA) of the
+  Constructive-Destructive Leadership Scale (FONDECYT 1170239 survey), using 13
+  of its 14 items (item 3, the negatively worded laissez-faire item, excluded).
+  Produces
+  the class enumeration (Table 1), item-response probabilities (Table 3),
+  survey-weighted profile characteristics with medians (Table 2), the
+  bias-adjusted three-step associations -- maximum-likelihood odds ratios
+  (Table S1) and marginal predicted probabilities (Table S2) -- and the
+  naive-vs-BCH sensitivity analysis (Table S3), together with Figures 1-2.
+date: last-modified
+author: "Andres Gonzalez Santa Cruz"
+toc: true
+toc-location: left
+toc-float: true
+format: 
+  html:
+    code-fold: true
+    embed-resources: true
+    self-contained: true
+    theme: 
+      - journal
+    fig-cap-location: top  
+    toc: true
+    toc-location: left
+execute:
+  error: false       # Stop on errors; never publish an apparently complete failed run
+  echo: true         # Show R code in the output
+  warning: true      # Show warnings
+  message: true      # Show messages from the code
+  freeze: false      # Recompute reports; measurement reuse is validated explicitly below
+editor: source
+execute-dir: project
+lightbox: auto
+---
+
+
+```{=html}
+<style type="text/css">
+.enumeration-scroll { max-height: 500px; overflow-y: auto; }
+table { border-top: 1.5pt solid; border-bottom: 1.5pt solid; }
+table thead { border-bottom: .75pt solid; }
+table th, table td, table tr { border: 0 !important; }
+</style>
+```
+
+# Overview
+
+This notebook produces the general-sample analysis from the existing processed
+FONDECYT 1170239 input file. The [reader directory](index.qmd) places it alongside
+the hospital comparison, adjusted associations, sensitivities, and figures.
+The upstream construction of this processed input is not implemented here. It is organized as:
+
+| Output | Section |
+|---|---|
+| **Table 1** — class enumeration (logL, AIC, BIC, entropy, BLRT) | *Class enumeration* |
+| **Figure 1** — enumeration scree (AIC/BIC/CAIC/SABIC, BLRT, entropy) | *Figure 1* |
+| **Table 3** + **Figure 2** — item-response probabilities | *Four-class model* |
+| **Table 2** — survey-weighted profile characteristics (medians for continuous) | *Table 2* |
+| **Table S1** — ML three-step odds ratios (ref = C1 Constructive) | *Table S1* |
+| **Table S2** — marginal predicted probabilities by covariate level | *Table S2* |
+| **Table S3** — sensitivity: naive vs BCH | *Table S3* |
+
+**Estimators.** The measurement model is fitted with `glca` (as in the
+manuscript). Profile membership is related to covariates with two *bias-adjusted
+three-step* estimators that correct for classification error:
+
+* **Maximum-likelihood (ML) three-step** — used for the odds ratios (Table S1)
+  and the marginal predicted probabilities (Table S2). It maximises
+  $\prod_i \sum_t \pi_t(z_i;\beta)\,P(W{=}w_i\mid X{=}t)$, where $W$ is the modal
+  class, $P(W\mid X)$ is the (fixed) classification matrix from the measurement
+  step, and $\pi_t(z;\beta)$ is a multinomial logit. No negative weights arise,
+  so the logit is well behaved. *Implemented from scratch below* (`ml3step()`).
+* **Bolck-Croon-Hagenaars (BCH)** — used for the naive-vs-adjusted sensitivity
+  analysis (Table S3) and as the bias-adjusted means/proportions. *Implemented
+  below* (`bch_setup()`).
+
+**Configuration and reproducibility.** The variable mapping below is complete for
+the supplied input. Set `LCA_RAW_PATH` to use the same input on another computer;
+otherwise the notebook looks in this directory, then the documented Drive locations.
+An existing `lca_results.rds` is reused only after measurement-input alignment
+checks. Set `LCA_REFIT=1` for a fresh 4,000-start enumeration and bootstrap LRT.
+Without an existing bundle, the full estimation runs automatically. Table 2,
+the existing three-step analyses, and exports are regenerated on every render.
+See [EXPORTS.md](EXPORTS.md) for the numeric tables and reusable private bundle.
+
+```{r}
+#| label: setup
+#| results: "hold"
+
+rm(list = ls()); gc()
+
+required_packages <- c(
+  # data wrangling
+  "dplyr", "tidyr", "tibble", "purrr", "readr", "haven", "forcats", "stringr", "janitor", "rlang",
+  # latent class analysis
+  "glca", "poLCA",
+  # survey-weighted estimation + simulation
+  "survey", "MASS",
+  # parallel backend for the enumeration fits + bootstrap LRT
+  "future", "furrr",
+  # multinomial logit (used for checks)
+  "nnet",
+  # plotting
+  "ggplot2", "patchwork", "scales",
+  # tables / output
+  "knitr", "kableExtra", "digest"
+)
+
+missing_packages <- required_packages[!vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing_packages)) stop("Install required R packages before rendering: ", paste(missing_packages, collapse = ", "))
+invisible(lapply(required_packages, function(pkg)
+  suppressPackageStartupMessages(library(pkg, character.only = TRUE))))
+source("R/leadership_table2.R")
+source("R/load_leadership_results.R")
+reuse_measurement <- file.exists("lca_results.rds") && Sys.getenv("LCA_REFIT", "0") != "1"
+saved_measurement <- if (reuse_measurement) readRDS("lca_results.rds") else NULL
+render_started_utc <- format(Sys.time(), tz = "UTC", usetz = TRUE)
+
+set.seed(2125)            # 2125 = lucky seed; used for every stochastic step
+options(scipen = 999)
+
+## Random starting values for every glca() measurement fit (local-maxima
+## safeguard). The reported models below use this many random starts; the
+## bootstrap LRT (gofglca) is unaffected -- it warm-starts each replicate from
+## the fitted parameters with a single EM run. Lower n_init (e.g. 50) for quick
+## drafts and restore 4000 for the final, reportable run.
+n_init <- 4000
+```
+
+## Data and variable mapping
+
+The `vars` list maps analysis names to verified columns in the supplied file.
+Required columns and positive survey weights are checked before estimation. Leadership items are the ordinal variables
+`lid_des1 … lid_des14` (1 = never … 4 = almost always/always), of which **13**
+enter the LCA — item 3 (`lid_des3`) is excluded.
+
+```{r}
+#| label: load-data
+#| results: "hold"
+
+## (i) ------------------------------------------------------------ FILE PATH
+## Resuelve la ruta automaticamente detectando la letra de unidad de Google
+## Drive: prueba H:, G: y C: y usa la primera raiz donde el archivo exista.
+## Asi el .qmd no se rompe si Google Drive cambia de unidad o se abre en otro PC.
+## Solo mantienes 'rel' (ruta RELATIVA a la raiz de Google Drive).
+resolve_drive_path <- function(rel,
+    roots = c("H:/My Drive", "G:/Mi unidad", "C:/Users/andre/Google Drive")) {
+  rel <- gsub("\\\\", "/", rel)
+  for (r in roots) {
+    p <- file.path(r, rel)
+    if (file.exists(p)) return(p)
+  }
+  stop("No se encontro el archivo en ninguna raiz conocida:\n  ",
+       paste(file.path(roots, rel), collapse = "\n  "),
+       "\nAgrega la raiz correcta a 'roots'.")
+}
+
+## Lector segun extension del archivo (.dta -> read_dta, .sav -> read_sav, etc.)
+read_any <- function(path) {
+  switch(tolower(tools::file_ext(path)),
+    dta = haven::read_dta(path),
+    sav = haven::read_sav(path),
+    rds = readRDS(path),
+    csv = readr::read_csv(path, show_col_types = FALSE),
+    stop("Extension no soportada: ", tools::file_ext(path)))
+}
+## La base .rds se genero (en otra sesion) con:
+##   rio::export(BD_2020_input3_match_not_miss, "BD_2020_input3_match_not_miss.rds")
+raw_path <- Sys.getenv("LCA_RAW_PATH", "")
+if (!nzchar(raw_path)) {
+  local_input <- "BD_2020_input3_match_not_miss.rds"
+  raw_path <- if (file.exists(local_input)) local_input else resolve_drive_path(
+    "DOCUMENTOS/6.TESIS 2018/LCA NAQ/BD_2020_input3_match_not_miss.rds")
+}
+if (!file.exists(raw_path)) stop("LCA_RAW_PATH does not point to an existing input file.")
+## Alternativas (bases procesadas en la carpeta del proyecto), si las prefieres:
+# raw_path <- resolve_drive_path("DOCUMENTOS/6.TESIS 2018/LCA NAQ/culorg 06-04- BD_05_02_19 (BD_22_10_18_lab_cul_org2)_post modelos_finales2.dta")
+message("Datos cargados desde: ", raw_path)
+
+raw <- read_any(raw_path) |> janitor::clean_names()   # LID_DES1..14 -> lid_des1..14
+
+## (ii) ----------------------------------------------------- VARIABLE MAPPING
+## Mapeo a las columnas REALES de BD_2020_input3_match_not_miss.rds. Las
+## covariables vienen como FACTORES con etiquetas; abajo se construyen copias
+## limpias: binarias 0/1 con 1 = expuesto (segun `yes_levels`) y continuas
+## numericas (`cont_vars`). 'vars' solo documenta la columna de origen.
+vars <- list(
+  ## 13 leadership items (ordinal 1-4), CDLS item order lid_des1..14 with
+  ## item 3 (lid_des3) EXCLUDED. lid_des3 -- "steers away from showing concern
+  ## about results" -- is the negatively worded laissez-faire item; it is dropped
+  ## from the LCA measurement model here, so 13 items enter every fit/figure.
+  items  = paste0("lid_des", c(1:2, 4:14)),
+
+  ## survey design
+  weight = "weight",   # ponderador (continuo)
+  strata = NA,         # no hay estrato muestral en esta base -> diseno solo-pesos
+  psu    = NA,         # no hay conglomerado/PSU en esta base
+
+  ## covariates for Tables 2 / S1-S3 (binary unless noted)
+  age            = "a53",                  # CONTINUOUS: edad en anios (20-83)
+  job_sat        = "satis",                # CONTINUOUS: suma satisfaccion laboral (0-20)
+  sex_woman      = "a52",                  # 1 = "Women"
+  eri            = "desbalance_dic",       # 1 = "Yes" (Effort-Reward Imbalance, ERI)
+  naq_frequent   = "naq_a",                # 1 = "2" (cumple criterio Agervold de actos negativos)
+  bully_self     = "autonaq",              # 1 = "Yes" (self-labeling bullied, 6m)
+  sex_harass     = "acos_sex",             # 1 = "2" (acoso sexual, 12m)
+  auditc_hazard  = "auditc",               # 1 = "Yes" (AUDIT-C de riesgo)
+  no_union       = "org_sind",             # 1 = "Yes" (ausencia de sindicato)
+  unpaid_care    = "carga_dom",            # 1 = "Yes" (cuidados no remunerados)
+  no_secondary   = "educacion_media",      # 1 = "Yes" (no completo secundaria)
+  small_wp       = "tamano_de_la_empresa", # 1 = "1 to 10" (lugar de 1-10 personas)
+  customer_no    = "atpub",                # 1 = "Job w/o customer-facing tasks"
+  econ_narrow    = "estrechez"             # 1 = "2" (estrechez economica)
+)
+
+## Covariables continuas (se copian como numericas, sin dicotomizar)
+cont_vars <- c("age", "job_sat")
+
+## Para cada covariable binaria: nivel(es) de texto que corresponden a "1 = expuesto".
+## (Asi la direccion 0/1 queda explicita y auditable, sin depender del codigo 1/2.)
+yes_levels <- list(
+  sex_woman     = "Women",
+  eri           = "Yes",
+  naq_frequent  = "2",
+  bully_self    = "Yes",
+  sex_harass    = "2",
+  auditc_hazard = "Yes",
+  no_union      = "Yes",
+  unpaid_care   = "Yes",
+  no_secondary  = "Yes",
+  small_wp      = "1 to 10",
+  customer_no   = "Job w/o customer-facing tasks",
+  econ_narrow   = "2"
+)
+
+## Build the analysis data frame -----------------------------------------
+## Leadership items -> ordered factors with the SAME 4 levels (1..4).
+## OJO: en esta base los items vienen codificados 0..3 (0 = nunca ... 3 = casi
+## siempre/siempre). El resto del notebook asume 1..4, asi que se desplazan +1
+## automaticamente si la base esta en base 0. (NO usar las versiones *_rec, que
+## estan dicotomizadas 0/1, ni *_clus.)
+required_columns <- unique(unlist(vars[!names(vars) %in% c("strata", "psu")]))
+missing_columns <- setdiff(required_columns, names(raw))
+if (length(missing_columns)) stop("Missing mapped columns: ", paste(missing_columns, collapse = ", "))
+d <- raw
+d$.source_row <- seq_len(nrow(d))
+item_min <- suppressWarnings(min(vapply(vars$items,
+              function(it) min(as.numeric(d[[it]]), na.rm = TRUE), numeric(1))))
+shift <- if (is.finite(item_min) && item_min == 0) 1L else 0L
+for (it in vars$items) {
+  values <- as.numeric(d[[it]]) + shift
+  if (any(!is.na(values) & !values %in% 1:4)) stop("Invalid ordinal codes in ", it)
+  d[[it]] <- factor(values, levels = 1:4, ordered = TRUE)
+}
+if (shift == 1L) message("Items de liderazgo recodificados de 0-3 a 1-4 (+1).")
+
+## --- helpers de coercion ------------------------------------------------
+## Numerico robusto: sirve para factor-de-numeros y para labelled/numeric.
+as_num <- function(x) {
+  if (is.factor(x)) return(suppressWarnings(as.numeric(as.character(x))))
+  as.numeric(haven::zap_labels(x))
+}
+## Binaria 0/1 desde un factor: 1 = nivel(es) en 'yes'. Los niveles de texto
+## "NA"/"Not Apply" se tratan como perdidos (NA), no como 0.
+to01 <- function(x, yes) {
+  f <- as.character(haven::as_factor(x))
+  f[f %in% c("NA", "Not Apply", "NaN", "")] <- NA
+  if (!any(f %in% yes, na.rm = TRUE)) stop("No mapped exposed level found: ", paste(yes, collapse = ", "))
+  out <- as.integer(f %in% yes)
+  out[is.na(f)] <- NA_integer_
+  out
+}
+
+## Continuas -> copia numerica
+for (nm in cont_vars) d[[nm]] <- as_num(d[[ vars[[nm]] ]])
+## Binarias -> copia 0/1 (1 = expuesto)
+for (nm in names(yes_levels)) d[[nm]] <- to01(d[[ vars[[nm]] ]], yes_levels[[nm]])
+
+## Survey weights are required; silently replacing them with 1 changes the estimand.
+d$.w <- as_num(d[[vars$weight]])
+if (any(!is.finite(d$.w) | d$.w <= 0)) stop("Survey weights must be finite and positive.")
+
+## Keep complete cases on the 13 items AND on the measurement-model concomitant
+## (sex_woman, used as ~sex_woman in item_f). glca does listwise deletion on its
+## model frame, so if the concomitant had any NA, g4$posterior would have FEWER
+## rows than d_lca and post4/modal4 would silently misalign with d_lca, the survey
+## design and every covariate vector. Enforcing it here keeps everything aligned.
+concomitant <- "sex_woman"   # RHS of item_f in the enumeration chunk
+d_lca <- d[stats::complete.cases(d[, c(vars$items, concomitant)]), ]
+cat("Rows total:", nrow(d), " | complete on 13 items + ", concomitant, ":", nrow(d_lca), "\n")
+model_input_hash <- digest::digest(d_lca[, c(vars$items, concomitant), drop = FALSE], algo = "sha256")
+measurement_validation <- if (reuse_measurement)
+  validate_saved_measurement(saved_measurement, d_lca, vars$items, concomitant) else "Fresh measurement estimation."
+cat(measurement_validation, "\n")
+sample_flow <- tibble::tibble(
+  stage = c("Input records", "Complete on 13 leadership items", "Complete on 13 items and sex"),
+  n = c(nrow(d), sum(complete.cases(d[, vars$items])), nrow(d_lca)))
+```
+
+```{r}
+#| label: survey-design
+#| results: "hold"
+
+## Survey design for the weighted descriptives (Table 2).
+## If strata/psu are not available, a weights-only design is used.
+has <- function(k) !isTRUE(is.na(vars[[k]])) && vars[[k]] %in% names(d_lca)
+
+if (has("strata") && has("psu")) {
+  dsn <- svydesign(ids = as.formula(paste0("~", vars$psu)),
+                   strata = as.formula(paste0("~", vars$strata)),
+                   weights = ~.w, data = d_lca, nest = TRUE)
+} else {
+  dsn <- svydesign(ids = ~1, weights = ~.w, data = d_lca)
+}
+dsn
+```
+
+## Helper functions
+
+`relative_entropy()`, the classification matrix, **BCH** weights, and the
+from-scratch **ML three-step** estimator.
+
+```{r}
+#| label: helpers
+#| results: "hold"
+
+## Relative entropy (0-1; higher = cleaner separation) from the posterior matrix.
+relative_entropy <- function(post) {
+  post <- as.matrix(post)
+  n <- nrow(post); K <- ncol(post)
+  e <- -sum(post * log(pmax(post, 1e-12)))
+  1 - e / (n * log(K))
+}
+
+## Classification matrix D[t, w] = P(W = w | X = t), W = modal class.
+class_matrix <- function(post, modal) {
+  K <- ncol(post)
+  ind <- outer(modal, 1:K, `==`) * 1            # n x K modal indicators
+  A <- t(as.matrix(post)) %*% ind               # K x K : sum_i post[i,t] I(W=w)
+  A / rowSums(A)                                 # rows (true t) sum to 1
+}
+
+## ---- BCH set-up: weight matrix bch[i, t] = (D^{-1})[t, w_i] -------------
+## Bias-adjusted class statistics use column t of `bch` as weights.
+bch_setup <- function(post, modal) {
+  D <- class_matrix(post, modal)
+  Dinv <- solve(D)
+  bch <- t(Dinv[, modal])                        # n x K ; bch[i,t]=Dinv[t,w_i]
+  list(D = D, Dinv = Dinv, w = bch)
+}
+
+## Bias-adjusted (BCH) weighted mean of a numeric x within each latent class.
+## (Use for proportions of 0/1 variables and for the mean of a score.)
+bch_class_mean <- function(x, bchw, sw = NULL) {
+  x <- as.numeric(x); K <- ncol(bchw)
+  if (is.null(sw)) sw <- rep(1, length(x))
+  vapply(seq_len(K), function(t) {
+    w <- bchw[, t] * sw
+    sum(w * x, na.rm = TRUE) / sum(w[!is.na(x)])
+  }, numeric(1))
+}
+
+## Naive (modal-assignment) mean of x within each class.
+naive_class_mean <- function(x, modal, sw = NULL, K = max(modal)) {
+  x <- as.numeric(x)
+  if (is.null(sw)) sw <- rep(1, length(x))
+  vapply(seq_len(K), function(t) {
+    idx <- which(modal == t)
+    sum(sw[idx] * x[idx], na.rm = TRUE) / sum(sw[idx][!is.na(x[idx])])
+  }, numeric(1))
+}
+
+## ---- ML three-step (Vermunt 2010) for ONE covariate z ------------------
+## Maximises  prod_i sum_t pi_t(z_i;b) * P(W=w_i | X=t),  reference class = 1.
+## Returns coefficients, vcov, and per-class odds ratios (exp of the slope).
+ml3step <- function(z, post, modal, sw = NULL, D = NULL) {
+  post <- as.matrix(post); K <- ncol(post)
+  if (is.null(sw)) sw <- rep(1, nrow(post))
+  ## Classification matrix D[t,w]=P(W=w|X=t) is a FIXED property of the
+  ## measurement step: compute it ONCE on the FULL sample (all rows of
+  ## post/modal), BEFORE dropping NA on z. Computing it on the per-covariate
+  ## complete-case subset would give each covariate a different D and would
+  ## disagree with the BCH analysis (Table S3, which uses the full-sample D).
+  if (is.null(D)) D <- class_matrix(post, modal)  # K x K, full measurement sample
+  z <- as.numeric(z)
+  ok <- !is.na(z)
+  z <- z[ok]; modal <- modal[ok]; post <- post[ok, , drop = FALSE]; sw <- sw[ok]
+  n <- length(z)   # rows AFTER dropping NA on z; must match z/sw or negll's
+                   # outer(rep(1, n), a) is non-conformable when z has missings.
+  Dw <- t(D[, modal])                            # n x K ; [i,t]=P(W=w_i|X=t)
+                                                 # global D indexed by the subset modal
+  negll <- function(par) {
+    a <- c(0, par[seq(1, 2 * (K - 1), 2)])       # intercepts (a_1 = 0)
+    b <- c(0, par[seq(2, 2 * (K - 1), 2)])       # slopes     (b_1 = 0)
+    eta <- outer(rep(1, n), a) + outer(z, b)     # n x K
+    eta <- eta - apply(eta, 1, max)              # stabilise
+    pis <- exp(eta); pis <- pis / rowSums(pis)   # n x K class probs
+    pw <- rowSums(pis * Dw)                       # P(W=w_i)
+    -sum(sw * log(pmax(pw, 1e-12)))
+  }
+  fit <- optim(rep(0, 2 * (K - 1)), negll, method = "BFGS", hessian = TRUE)
+  V <- tryCatch(solve(fit$hessian), error = function(e) matrix(NA, length(fit$par), length(fit$par)))
+  b_idx <- seq(2, 2 * (K - 1), 2)
+  b  <- fit$par[b_idx]
+  se <- sqrt(diag(V))[b_idx]
+  tibble::tibble(
+    class = 2:K,
+    OR    = exp(b),
+    lo    = exp(b - 1.96 * se),
+    hi    = exp(b + 1.96 * se)
+  ) -> ors
+  list(par = fit$par, V = V, K = K, ors = ors, conv = fit$convergence)
+}
+
+## Parametric-bootstrap marginal predicted probabilities P(X=t | z) at z=0 and
+## z=1, with 95% CIs and the difference (pp). Draws beta ~ N(beta_hat, V).
+ml3step_margins <- function(m, B = 2000) {
+  K <- m$K; par <- m$par; V <- m$V
+  draws <- MASS::mvrnorm(B, mu = par, Sigma = V)
+  probs <- function(p, z) {
+    a <- c(0, p[seq(1, 2 * (K - 1), 2)]); b <- c(0, p[seq(2, 2 * (K - 1), 2)])
+    eta <- a + z * b; e <- exp(eta - max(eta)); e / sum(e)
+  }
+  p0 <- t(apply(draws, 1, probs, z = 0))         # B x K
+  p1 <- t(apply(draws, 1, probs, z = 1))
+  q <- function(M) apply(M, 2, quantile, c(.025, .5, .975))
+  list(
+    z0 = q(p0), z1 = q(p1),
+    delta = apply(p1 - p0, 2, quantile, c(.025, .5, .975))
+  )
+}
+```
+
+## Table 1 — Class enumeration
+
+Fits 2- to 10-class models with sex as the concomitant, 4,000 starts per
+model and 1,000 bootstrap replicates per LRT comparison. In reuse mode, the
+verified saved enumeration table is loaded without repeating estimation.
+
+```{r}
+#| label: enumeration
+#| results: "hold"
+#| cache: false
+#| class-output: enumeration-scroll
+# Report chunks always run. Only explicitly validated measurement results are reused.
+n_lca <- nrow(d_lca)
+if (reuse_measurement) {
+  fit_tbl <- saved_measurement$fit_tbl
+  nboot <- if (is.null(saved_measurement$nboot)) 1000L else saved_measurement$nboot
+  cat("Reusing saved measurement estimates; no LCA or BLRT refitted.\n")
+} else {
+item_f <- as.formula(paste0("item(", paste(vars$items, collapse = ", "), ") ~ sex_woman"))
+Kmax <- 10
+
+## ---- Parallel backend -------------------------------------------------
+## glca/gofglca are single-threaded, so on a multi-core machine the default
+## (sequential) enumeration leaves ~all cores idle. We distribute the work
+## ourselves across multisession workers: the k-model fits run concurrently,
+## and the bootstrap LRT is split into (k x chunk) tasks so the 1000 replicates
+## of EACH comparison genuinely span >= nchunks cores (see the BLRT block below).
+## >= 8 workers as requested; capped at 16 to keep RAM in check (each worker is
+## a separate R process holding its own copy of d_lca). gc() is called after the
+## fits, after the bootstrap, and inside every worker once its chunk is done.
+## detectCores() can return NA on some platforms/containers; fall back safely so
+## n_workers is never NA (which would make plan() error and cascade-fail the run).
+n_phys <- parallel::detectCores(logical = FALSE)
+if (is.na(n_phys)) n_phys <- parallel::detectCores()
+if (is.na(n_phys)) n_phys <- 4L
+n_workers <- max(8L, min(n_phys - 2L, 16L))
+future::plan(future::multisession, workers = n_workers)
+message("Parallel enumeration on ", n_workers, " workers.")
+
+## Fit 2..Kmax class models concurrently (fits[[1]] stays NULL).
+## n.init = n_init (4000) random starts per model avoid local maxima. Two
+## worker-side safeguards are needed precisely BECAUSE n.init is large:
+##  (1) RNGkind("Mersenne-Twister"): furrr_options(seed = TRUE) switches each
+##      worker to the L'Ecuyer-CMRG generator. glca() reseeds internally with
+##      set.seed(seed), so under L'Ecuyer its 4000 random starts DIFFER from the
+##      (validated) Mersenne-Twister ones -- and for the largest model (k = 10)
+##      one L'Ecuyer start is degenerate: loglik -> NaN -> maxdiff -> NA ->
+##      glca() errors with "missing value where TRUE/FALSE is needed". Forcing MT
+##      makes every worker reproduce the well-behaved standalone fit. (This is
+##      why n.init = 10 never failed: 10 starts didn't reach the bad one.)
+##  (2) seed fallback 2125 -> 2126 -> ...: belt-and-suspenders. If some future
+##      glca version / dataset still seeds a degenerate start, retry with the next
+##      seed rather than crash the whole render. 2125 (the lucky seed) is used
+##      whenever it works; with the MT fix above it works for every k here, so no
+##      fallback is triggered and results stay exactly reproducible at 2125.
+## n_init, item_f and d_lca are captured automatically as globals by furrr.
+fits <- vector("list", Kmax)
+fits[2:Kmax] <- furrr::future_map(2:Kmax, function(k) {
+  RNGkind("Mersenne-Twister")
+  g <- NULL
+  for (s in 2125:2134) {
+    g <- tryCatch(glca(item_f, data = d_lca, nclass = k, seed = s,
+                       n.init = n_init, verbose = FALSE),
+                  error = function(e) NULL)
+    if (!is.null(g)) break
+  }
+  if (is.null(g)) stop("glca failed for nclass=", k, " across fallback seeds 2125-2134.")
+  attr(g, "successful_seed") <- s
+  g
+}, .options = furrr::furrr_options(seed = TRUE, packages = "glca"))
+gc()   # reclaim memory used while collecting the fits back to the main process
+
+## Extract posterior matrix from a glca object (single group).
+get_post <- function(g) {
+  p <- g$posterior
+  if (is.list(p)) p <- p[[1]]
+  as.matrix(p)
+}
+
+## Defensive getter for gof scalars (slot names vary slightly by glca version;
+## if these return NA, inspect str(fits[[4]]$gof) and adjust the candidates).
+gof_get <- function(g, what) {
+  gg <- g$gof
+  cand <- switch(what,
+    loglik = c("loglik", "logLik", "ll"),
+    aic    = c("aic", "AIC"),
+    bic    = c("bic", "BIC"))
+  for (nm in cand) if (!is.null(gg[[nm]])) return(as.numeric(gg[[nm]])[1])
+  NA_real_
+}
+
+n_lca <- nrow(d_lca)
+fit_tbl <- purrr::map_dfr(2:Kmax, function(k) {
+  g  <- fits[[k]]
+  ll  <- gof_get(g, "loglik"); aic <- gof_get(g, "aic"); bic <- gof_get(g, "bic")
+  np  <- (aic + 2 * ll) / 2                       # npar = (AIC + 2*logL)/2
+  caic  <- -2 * ll + np * (log(n_lca) + 1)
+  sabic <- -2 * ll + np * log((n_lca + 2) / 24)
+  ## AWE (approximate weight of evidence; Banfield & Raftery 1993, Masyn 2013):
+  ## -2logL + 2*npar*(3/2 + ln n). Like BIC/CAIC/SABIC, LOWER = better. (See the
+  ## table note for the formula variant; this is the psychometric-standard one.)
+  awe   <- -2 * ll + 2 * np * (1.5 + log(n_lca))
+  post  <- get_post(g); modal <- max.col(post)
+  ent   <- relative_entropy(post)
+  ## Smallest class + AvePP from MODAL (most-likely) class membership.
+  cl_n  <- as.integer(table(factor(modal, levels = 1:k)))      # modal class sizes
+  avepp <- vapply(1:k, function(t)                             # AvePP_t per class
+             if (any(modal == t)) mean(post[modal == t, t]) else NA_real_, numeric(1))
+  tibble::tibble(Classes = k, logLik = ll, npar = np,
+                 AIC = aic, BIC = bic, CAIC = caic, SABIC = sabic, AWE = awe,
+                 Entropy = ent, `Mean AvePP` = mean(avepp, na.rm = TRUE),
+                 `Smallest n` = min(cl_n), `Smallest %` = min(cl_n) / n_lca * 100)
+})
+
+## Approximate Bayes factor BF_{k,k+1} = exp((BIC_{k+1} - BIC_k)/2) (Masyn 2013):
+## BF > 1 favours the k-class model over k+1 (>3 moderate, >10 strong evidence);
+## undefined (NA) for the largest model, which has no k+1. Formatted at display.
+bic_next  <- fit_tbl$BIC[match(fit_tbl$Classes + 1L, fit_tbl$Classes)]
+fit_tbl$BF <- exp((bic_next - fit_tbl$BIC) / 2)
+
+## ---- Bootstrap LRT, k vs k-1, parallelised across the 1000 replicates ----
+## Approach B. Each comparison's nboot=1000 reps are split into `nchunks`
+## independent chunks (distinct seeds); chunks for ALL k-comparisons are flat-
+## mapped onto the workers (8 k x nchunks tasks), so the 1000 reps genuinely run
+## across >=8 cores instead of one. Validated against gofglca on gss08: the
+## p-value = mean(boot.GsqR >= observed Deviance) reproduces glca exactly, and
+## pooling independent-seed chunks is statistically identical to one long run
+## (the reps are i.i.d.). Per-chunk extractor pulls the observed LRT statistic
+## from dtable[2,"Deviance"] and the bootstrap LRT vector from boot$boot.GsqR.
+nboot   <- 1000
+nchunks <- 8L                                  # >=8 -> the 1000 reps span >=8 cores per k
+chunk_nb <- rep(nboot %/% nchunks, nchunks)    # reps per chunk (sums to nboot)
+rem <- nboot %% nchunks; if (rem) chunk_nb[seq_len(rem)] <- chunk_nb[seq_len(rem)] + 1L
+
+## Flat task grid: one row per (k-comparison, chunk). Distinct seed per chunk.
+blrt_grid <- expand.grid(k = 3:Kmax, chunk = seq_len(nchunks), KEEP.OUT.ATTRS = FALSE)
+
+blrt_chunk <- function(k, chunk, nb, seed) {
+  go <- tryCatch(glca::gofglca(fits[[k - 1]], fits[[k]], test = "boot",
+                               nboot = nb, seed = seed),
+                 error = function(e) NULL)
+  if (is.null(go)) return(list(k = k, obs = NA_real_, boot = numeric(0)))
+  out <- list(k = k,
+              obs  = as.numeric(go$dtable[2, "Deviance"]),        # observed LRT stat
+              boot = as.numeric(go$boot$boot.GsqR[1, ]))          # bootstrap LRT reps
+  rm(go); gc(verbose = FALSE)                  # free per-chunk memory inside worker
+  out
+}
+
+chunk_res <- furrr::future_pmap(
+  list(k = blrt_grid$k, chunk = blrt_grid$chunk),
+  ## Unique seed per (k, chunk) -> every comparison draws an independent
+  ## bootstrap stream (avoids correlated Monte-Carlo error across k).
+  function(k, chunk) blrt_chunk(k, chunk, chunk_nb[chunk],
+                                seed = (k - 3L) * nchunks + chunk),
+  .options = furrr::furrr_options(seed = TRUE, packages = "glca",
+                                  globals = c("fits", "chunk_nb", "nchunks", "blrt_chunk")))
+future::plan(future::sequential)               # release workers
+gc()                                           # tidy the main process
+
+## Pool the chunks back per k and compute p = mean(pooled boot >= observed).
+## obs (observed Deviance) is deterministic and identical across a k's chunks,
+## so take it from the first chunk that succeeded (not strictly parts[[1]], which
+## would drop the whole k if only that one chunk hit a transient failure).
+blrt_p <- c(NA, sapply(3:Kmax, function(kk) {
+  parts <- chunk_res[vapply(chunk_res, function(z) z$k, numeric(1)) == kk]
+  obs   <- stats::na.omit(vapply(parts, function(z) z$obs, numeric(1)))[1]
+  boot  <- unlist(lapply(parts, `[[`, "boot"))
+  if (is.na(obs) || !length(boot)) NA_real_ else mean(boot >= obs)
+}))
+fit_tbl$`BLRT P` <- blrt_p[match(fit_tbl$Classes, 2:Kmax)]
+rm(chunk_res); gc()
+}
+
+fit_tbl |>
+  dplyr::mutate(dplyr::across(c(logLik, AIC, BIC, CAIC, SABIC, AWE), ~round(.x, 2)),
+                Entropy = round(Entropy, 3),
+                `Mean AvePP` = round(`Mean AvePP`, 3),
+                `Smallest %` = round(`Smallest %`, 1),
+                BF = dplyr::case_when(is.na(BF)  ~ NA_character_,
+                                      BF > 100   ~ ">100",
+                                      BF < 0.01  ~ "<0.01",
+                                      TRUE       ~ sprintf("%.2f", BF)),
+                `BLRT P` = ifelse(`BLRT P` < 0.001, "<0.001", sprintf("%.3f", `BLRT P`))) |>
+  dplyr::select(Classes, logLik, npar, AIC, BIC, CAIC, SABIC, AWE, Entropy,
+                `Mean AvePP`, `Smallest n`, `Smallest %`, BF, `BLRT P`) |>
+  knitr::kable("markdown", caption = "Table 1. Latent class model fit (2-10 classes; sex as covariate).")
+```
+
+*Notes.* **AWE** = approximate weight of evidence criterion, computed as
+$-2\log L + 2\,p\,(3/2 + \ln n)$ where $p$ = number of parameters (Banfield &
+Raftery, 1993; Masyn, 2013); like BIC/CAIC/SABIC, **lower = better**. (Some
+sources drop the factor 2, i.e. $-2\log L + p(3/2 + \ln n)$, or use the
+classification log-likelihood; the value above uses the psychometric-standard
+form and the observed log-likelihood.) **BF** = approximate Bayes factor
+comparing the $k$-class model with the $(k{+}1)$-class model,
+$\exp[(\mathrm{BIC}_{k+1}-\mathrm{BIC}_k)/2]$ (Masyn, 2013); $\mathrm{BF} > 1$
+favours the more parsimonious $k$-class solution ($>3$ moderate, $>10$ strong),
+and it is undefined for the 10-class model (no $k{+}1$). **Mean AvePP** = mean
+across classes of the average posterior probability of the modal class
+($>.70$ = good separation). **Smallest n / Smallest %** = size of the smallest
+class under modal (most-likely) assignment. **Entropy** = relative entropy
+($0$–$1$; higher = cleaner classification). The Vuong–Lo–Mendell–Rubin adjusted
+LRT is not reported (it cannot be computed reliably from the `glca` output); the
+parametric bootstrap LRT (**BLRT P**), found more accurate for LCA class
+enumeration by Nylund et al. (2007), is reported instead.
+
+## Figure 1 — Enumeration scree
+
+```{r}
+#| label: figure1
+#| fig-width: 9
+#| fig-height: 8
+#| results: "hold"
+
+okabe <- c(AIC = "#0072B2", BIC = "#D55E00", CAIC = "#CC79A7", SABIC = "#009E73")
+retained <- 4
+
+ic_long <- fit_tbl |>
+  dplyr::select(Classes, AIC, BIC, CAIC, SABIC) |>
+  tidyr::pivot_longer(-Classes, names_to = "Criterion", values_to = "value") |>
+  dplyr::mutate(Criterion = factor(Criterion, levels = names(okabe)))
+mins <- ic_long |> dplyr::group_by(Criterion) |> dplyr::slice_min(value, n = 1)
+
+pA <- ggplot(ic_long, aes(Classes, value, colour = Criterion, shape = Criterion)) +
+  annotate("rect", xmin = retained - .5, xmax = retained + .5, ymin = -Inf, ymax = Inf,
+           fill = "grey85", alpha = .5) +
+  geom_vline(xintercept = retained, linetype = "dashed", colour = "grey40") +
+  geom_line(aes(linetype = Criterion), linewidth = .7) + geom_point(size = 2.4) +
+  geom_point(data = mins, shape = 21, size = 4.6, stroke = .9, colour = "grey20", fill = NA) +
+  scale_colour_manual(values = okabe) +
+  scale_x_continuous(breaks = 2:10) +
+  labs(x = "Number of latent classes", y = "Information criterion", colour = "Information criterion") +
+  guides(shape = "none", linetype = "none") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top", panel.grid.minor = element_blank())
+
+pB <- ggplot(fit_tbl, aes(Classes, `BLRT P`)) +
+  geom_hline(yintercept = .05, linetype = "dashed", colour = "grey40") +
+  geom_line(linewidth = .6, colour = "grey30") + geom_point(size = 2.6, colour = "#D55E00") +
+  scale_x_continuous(breaks = 2:10) +
+  labs(x = "Number of latent classes", y = "Bootstrap LRT P (k vs k-1)") +
+  theme_minimal(base_size = 12) + theme(panel.grid.minor = element_blank())
+
+pC <- ggplot(fit_tbl, aes(Classes, Entropy)) +
+  geom_vline(xintercept = retained, linetype = "dashed", colour = "grey40") +
+  geom_line(linewidth = .6, colour = "grey30") + geom_point(size = 2.6, colour = "#0072B2") +
+  scale_x_continuous(breaks = 2:10) +
+  labs(x = "Number of latent classes", y = "Relative entropy") +
+  theme_minimal(base_size = 12) + theme(panel.grid.minor = element_blank())
+
+fig1 <- pA / (pB | pC) + patchwork::plot_layout(heights = c(1.5, 1)) +
+  patchwork::plot_annotation(tag_levels = "A")
+fig1
+ggsave("Figure1_enumeration.png", fig1, width = 9, height = 8, dpi = 300, bg = "white")
+```
+
+## Four-class model — item-response probabilities (Table 3) and Figure 2
+
+`item_meta` carries the English label and the behavior **type** for each item.
+Note **item 3** (`lid_des3`, the negatively worded laissez-faire item *"steers
+away from showing concern about results"*) is **excluded** from the LCA, so the
+measurement model and every figure below are built on the remaining 13 items.
+
+```{r}
+#| label: four-class-rho
+#| results: "hold"
+
+K <- 4
+if (reuse_measurement) {
+  post4 <- saved_measurement$post4
+  rho <- saved_measurement$rho4
+  class_labels <- saved_measurement$class_labels
+  perm <- saved_measurement$class_permutation
+  modal4 <- max.col(post4, ties.method = "first")
+  sizes <- vapply(1:K, function(k) sum(d_lca$.w[modal4 == k]), numeric(1))
+  sizes <- sizes/sum(sizes)
+  stopifnot(nrow(post4) == nrow(d_lca))
+} else {
+g4 <- fits[[4]]
+post4 <- get_post(g4)
+modal4 <- max.col(post4, ties.method = "first")
+
+## Guard: post4/modal4 must align row-for-row with d_lca (and the survey design
+## and all covariate vectors). If glca dropped rows (e.g. concomitant NA), stop
+## loudly instead of silently corrupting Tables 2 / S1 / S2 / S3.
+stopifnot(nrow(post4) == nrow(d_lca))
+
+## class sizes (weighted share)
+sizes <- sapply(1:K, function(t) sum(d_lca$.w[modal4 == t])) ; sizes <- sizes / sum(sizes)
+
+## Item-response probabilities rho: list over items, each K x 4 (categories).
+get_rho <- function(g) {
+  r <- g$param$rho
+  if (is.list(r) && is.list(r[[1]])) r <- r[[1]]   # unwrap group level if present
+  r
+}
+rho <- get_rho(g4)   # rho[[item]] is a K x 4 matrix (rows = class, cols = category)
+
+## ── Canonical class ordering ──────────────────────────────────────────────────
+## glca does not guarantee consistent class-index ordering across re-renders.
+## We enforce a canonical ordering that is stable across runs:
+##   C1 = Constructive       C2 = Passive/absent
+##   C3 = Active constructive  C4 = Ambivalent/destructive
+##
+## Algorithm (item profiles only — no covariates, avoids circularity):
+##   mean P(response ∈ {3,4}) across all 13 items per class:
+##     minimum  → Passive/absent  (endorses nothing)
+##     maximum  → Active constructive (endorses most)
+##     2nd min  → Ambivalent/destructive (mixed; lower overall than constructive)
+##     remaining → Constructive
+m_top2 <- vapply(1:K, function(k)
+  mean(sapply(rho, function(r) r[k, 3] + r[k, 4])), numeric(1))
+k_PA <- which.min(m_top2)
+k_AC <- which.max(m_top2)
+rem  <- setdiff(1:K, c(k_PA, k_AC))
+k_AD <- rem[which.min(m_top2[rem])]
+k_C  <- setdiff(rem, k_AD)
+perm <- c(k_C, k_PA, k_AC, k_AD)   # perm[i] = glca index for canonical slot i
+class_labels <- c("C1 Constructive", "C2 Passive/absent",
+                  "C3 Active constructive", "C4 Ambivalent/destructive")
+cat("Canonical class mapping (glca index → canonical label):\n")
+for (i in 1:4) cat(sprintf("  glca C%d (m_top2=%.3f) → %s\n",
+                            perm[i], m_top2[perm[i]], class_labels[i]))
+## Apply permutation to all class-indexed objects
+post4  <- post4[, perm]
+modal4 <- max.col(post4, ties.method = "first")                          # recompute from reordered posteriors
+rho    <- lapply(rho, function(r) r[perm, , drop = FALSE])
+sizes  <- sapply(1:K, function(t) sum(d_lca$.w[modal4 == t])); sizes <- sizes / sum(sizes)
+cat("Class sizes after canonicalization:", paste(sprintf("%.1f%%", 100*sizes), collapse=", "), "\n")
+}
+
+## ---- item metadata (order = vars$items = lid_des1..14 WITHOUT lid_des3) --
+## lid_des3 is excluded from the LCA (see the variable-mapping chunk), so it is
+## intentionally absent here too; this table must stay aligned row-for-row with
+## vars$items (13 rows) so rho[[j]] maps to the right item.
+item_meta <- tibble::tribble(
+  ~item,        ~label,                                          ~type,
+  "lid_des1",   "Humiliates employees",                          "Destructive",
+  "lid_des2",   "Encourages creative ideas",                     "Constructive",
+  "lid_des4",   "Gestures of displeasure",                       "Destructive",
+  "lid_des5",   "Avoids making decisions",                       "Laissez-faire",
+  "lid_des6",   "Recognizes good performance",                   "Constructive",
+  "lid_des7",   "Avoids involvement in work",                    "Laissez-faire",
+  "lid_des8",   "Spreads false information",                     "Destructive",
+  "lid_des9",   "Absent when needed",                            "Laissez-faire",
+  "lid_des10",  "Berates by phone / rude email",                 "Destructive",
+  "lid_des11",  "Seeks to develop capabilities",                 "Constructive",
+  "lid_des12",  "Sets clear objectives",                         "Constructive",
+  "lid_des13",  "Defines / explains tasks",                      "Constructive",
+  "lid_des14",  "Flexible, open to innovation",                  "Constructive"
+)
+
+## ---- Table 3: probability of the top two categories (3 + 4) ------------
+top2 <- t(vapply(seq_along(vars$items), function(j) rho[[j]][, 3] + rho[[j]][, 4], numeric(K)))
+colnames(top2) <- paste0("C", 1:K)
+tab3 <- dplyr::bind_cols(item_meta[, c("label","type")], as.data.frame(round(top2, 2)))
+
+tab3 |>
+  dplyr::transmute(`Leadership item` = paste0(label, " (", tolower(type), ")"),
+                   C1, C2, C3, C4) |>
+  knitr::kable("markdown", caption = "Table 3. Item-response probabilities (categories 3+4), four-class model.")
+```
+
+```{r}
+#| label: figure2
+#| fig-width: 11
+#| fig-height: 7
+#| results: "hold"
+
+cats <- c("Never","Sometimes","Fairly often","Almost always/always")
+blue <- c("#DEEBF7","#9ECAE1","#4292C6","#08519C")
+
+rho_long <- purrr::map_dfr(seq_along(vars$items), function(j) {
+  m <- rho[[j]]                                   # K x 4
+  tidyr::expand_grid(class = 1:K, cat = 1:4) |>
+    dplyr::mutate(p = as.vector(t(m))[ (class-1)*4 + cat ],
+                  item = item_meta$item[j])
+}) |>
+  dplyr::left_join(item_meta, by = "item") |>
+  dplyr::mutate(
+    type  = factor(type, levels = c("Destructive","Laissez-faire","Constructive")),
+    label = factor(label, levels = rev(item_meta$label)),
+    cat   = factor(cats[cat], levels = cats),
+    class = factor(class_labels[class], levels = class_labels)
+  )
+
+fig2 <- ggplot(rho_long, aes(p, label, fill = cat)) +
+  geom_col(width = .72) +
+  facet_grid(type ~ class, scales = "free_y", space = "free_y", switch = "y") +
+  scale_fill_manual(values = blue, name = "Response category") +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1),
+                     breaks = c(0, .5, 1), expand = expansion(mult = .04)) +
+  labs(x = "Response-category probability", y = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top", panel.spacing.x = unit(1, "lines"),
+        panel.grid = element_blank(), strip.placement = "outside",
+        strip.text.y.left = element_text(face = "bold", angle = 0))
+fig2
+ggsave("Figure2_itemprob.png", fig2, width = 11, height = 7, dpi = 300, bg = "white")
+```
+
+## Classification diagnostics — AvePP and OCC
+
+For the retained four-class model, classification quality is summarised by the
+**average posterior probability** (AvePP) and the **odds of correct
+classification** (OCC). AvePP$_k$ is the mean posterior probability of class $k$
+among the cases modally assigned to class $k$ (rule of thumb: AvePP $>$ .70 for
+every class). OCC$_k = [\text{AvePP}_k/(1-\text{AvePP}_k)] \big/ [\pi_k/(1-\pi_k)]$,
+where $\pi_k$ is the estimated class prevalence (mean posterior); OCC$_k > 5$
+indicates good assignment (Nagin, 2005).
+
+```{r}
+#| label: avepp-occ
+#| results: "hold"
+
+Kd      <- ncol(post4)
+pi_k    <- colMeans(post4)                                   # estimated prevalence
+n_modal <- as.integer(table(factor(modal4, levels = 1:Kd)))  # modal class sizes
+AvePP   <- vapply(1:Kd, function(k) mean(post4[modal4 == k, k]), numeric(1))
+OCC     <- (AvePP / (1 - AvePP)) / (pi_k / (1 - pi_k))
+
+class_diag <- tibble::tibble(
+  Class               = paste0("C", 1:Kd),
+  `n (modal)`         = n_modal,
+  `pi_k (prevalence)` = round(pi_k, 3),
+  AvePP               = round(AvePP, 3),
+  OCC                 = round(OCC, 2)
+)
+class_diag |>
+  knitr::kable("markdown",
+    caption = "Classification diagnostics (four-class): average posterior probabilities (AvePP) and odds of correct classification (OCC).")
+```
+
+```{r}
+#| label: avepp-results-sentence
+#| echo: false
+#| results: asis
+ent4  <- relative_entropy(post4)
+all70 <- all(AvePP > 0.70)
+cat(sprintf(
+  "All four profiles are assigned with high certainty: average posterior probabilities range %.2f to %.2f%s, and odds of correct classification exceed %.0f for every class, consistent with the high relative entropy (%.2f). Classification error is therefore minimal.\n",
+  min(AvePP), max(AvePP),
+  if (all70) " (all > .70)" else " (note: not all exceed .70)",
+  floor(min(OCC)), ent4))
+```
+
+
+
+## Medians (Q1–Q3) and Table 2 — survey-weighted profile characteristics
+
+Continuous variables are summarized as survey-weighted median (Q1-Q3), and
+binary characteristics as survey-weighted percentages. Participant counts are
+unweighted. P-values are global comparisons across the four fixed modal classes:
+Rao-Scott F tests for binary characteristics and survey-adjusted Kruskal-Wallis
+rank tests for continuous characteristics. The latter compare ranks/distributions,
+not exclusively medians. SMD is the maximum absolute standardized mean difference
+among the six class pairs, using weighted means and class-specific variances.
+It is not a standardized difference of medians. These descriptive comparisons
+condition on modal classification and do not correct classification uncertainty.
+
+```{r}
+#| label: table2
+#| results: "hold"
+
+bin_vars <- c(
+  "Unpaid care work at home -- yes" = "unpaid_care",
+  "Did not complete secondary school" = "no_secondary",
+  "Absence of union -- yes" = "no_union",
+  "Workplace 1-10 workers" = "small_wp",
+  "Customer-facing tasks -- no" = "customer_no",
+  "Economic narrowness -- yes" = "econ_narrow",
+  "Effort-reward imbalance -- yes" = "eri",
+  "Sex -- women" = "sex_woman",
+  "Hazardous alcohol use (AUDIT-C) -- yes" = "auditc_hazard",
+  "Frequent negative acts (NAQ) -- yes" = "naq_frequent",
+  "Self-labeled bullying (last 6 mo)" = "bully_self",
+  "Sexual harassment (last 12 mo)" = "sex_harass")
+table2 <- build_leadership_table2(dsn, modal4, post4, class_labels, bin_vars)
+t2_full <- table2$full; t2_bin <- table2$binary; t2_cont <- table2$continuous
+t2_full |> knitr::kable("html", caption = "Table 2. Survey-weighted characteristics by leadership profile.")
+table2$class_sizes |> knitr::kable("html", digits = 3,
+  caption = "Class-size audit: actual participants, sum of weights, weighted modal share, and model prevalence.")
+```
+
+*Notes.* Counts are unweighted; percentages and medians (Q1-Q3) are survey-weighted.
+The design uses weights only because strata and PSU identifiers are not mapped.
+For each variable, estimates exclude its missing values; the exported numeric
+summary gives every nonmissing denominator. Weighted quantiles retain midpoint
+weighted-ECDF interpolation from the original notebook. For a pair of classes,
+SMD = $(\mu_a-\mu_b)/\sqrt{(v_a+v_b)/2}$, where continuous $v$ is the survey
+estimate of population variance and binary $v=p(1-p)$. All six contrasts are
+exported, including signs. P-values are exploratory and are not multiplicity-adjusted.
+Unavailable tests are labeled "Not estimable" with a reason in the test export.
+See the [survey rank-test documentation](https://search.r-project.org/CRAN/refmans/survey/html/svyranktest.html).
+
+## Table S1 — ML three-step odds ratios (reference = C1 Constructive)
+
+One covariate at a time. Each row is the per-class OR (vs C1 Constructive) for a
+one-unit change in the covariate, from the from-scratch `ml3step()`.
+
+```{r}
+#| label: tableS1
+#| results: "hold"
+#| cache: false
+## cache OFF: ml3step is cheap (seconds), and a cached tableS1 would silently keep
+## stale odds ratios if ml3step() or post4/modal4 change upstream (knitr cache keys
+## only on this chunk's own code, not on upstream objects).
+
+## covariates to model (label -> key); reference class is C1
+or_vars <- c(
+  "Effort-reward imbalance"        = "eri",
+  "Hazardous alcohol use (AUDIT-C)"= "auditc_hazard",
+  "Absence of union"               = "no_union",
+  "Frequent negative acts (NAQ)"   = "naq_frequent",
+  "Self-labeled bullying"          = "bully_self",
+  "Sexual harassment"              = "sex_harass",
+  "Female sex"                     = "sex_woman"
+)
+
+fit_or <- function(key) {
+  ml3step(z = d_lca[[key]], post = post4, modal = modal4, sw = d_lca$.w)
+}
+ml_models <- lapply(or_vars, fit_or)
+
+s1 <- purrr::imap_dfr(or_vars, function(key, lab) {
+  m <- ml_models[[lab]]
+  if (is.null(m)) stop("Missing ML model for ", key)
+  fmt <- function(i) sprintf("%.2f (%.2f-%.2f)", m$ors$OR[i], m$ors$lo[i], m$ors$hi[i])
+  tibble::tibble(Covariate = lab,
+                 `C2 vs C1` = fmt(1), `C3 vs C1` = fmt(2), `C4 vs C1` = fmt(3))
+})
+s1 |> knitr::kable("markdown", caption = "Table S1. ML three-step odds ratios (95% CI), reference = C1.")
+```
+
+## Table S2 — Marginal predicted probabilities by covariate level
+
+Predicted P(class | covariate) at *No* (z = 0) and *Yes* (z = 1), with parametric
+bootstrap 95% CIs and the difference Δ (pp), from the same ML three-step fits.
+
+```{r}
+#| label: tableS2
+#| results: "hold"
+
+cls_lab <- class_labels
+set.seed(2125)  # Same intervals whether enumeration is reused or refitted.
+margin_objects <- lapply(ml_models, ml3step_margins)
+s2 <- purrr::imap_dfr(or_vars, function(key, lab) {
+  m <- ml_models[[lab]]
+  if (is.null(m)) return(NULL)
+  mg <- margin_objects[[lab]]
+  purrr::map_dfr(1:4, function(t) tibble::tibble(
+    Covariate = ifelse(t == 1, lab, ""),
+    Profile   = cls_lab[t],
+    `No, % (95% CI)`  = sprintf("%.1f (%.1f-%.1f)", 100*mg$z0[2,t], 100*mg$z0[1,t], 100*mg$z0[3,t]),
+    `Yes, % (95% CI)` = sprintf("%.1f (%.1f-%.1f)", 100*mg$z1[2,t], 100*mg$z1[1,t], 100*mg$z1[3,t]),
+    `Delta (pp)`      = sprintf("%+.1f", 100*mg$delta[2,t])
+  ))
+})
+s2 |> knitr::kable("markdown", caption = "Table S2. Marginal predicted probabilities by covariate level.")
+```
+
+## Table S3 — Sensitivity analysis: naive vs BCH
+
+This existing sensitivity uses unweighted estimates in both methods.
+For each binary covariate, the class-specific prevalence (and the mean of job
+satisfaction) under **naive modal assignment** versus **BCH** bias-adjustment.
+The maximum absolute naive–BCH discrepancy quantifies the impact of
+classification error (small when entropy is high).
+
+```{r}
+#| label: tableS3
+#| results: "hold"
+
+bch <- bch_setup(post4, modal4)
+
+s3_vars <- c(
+  "Effort-reward imbalance"        = "eri",
+  "Self-labeled bullying"          = "bully_self",
+  "Frequent negative acts (NAQ)"   = "naq_frequent",
+  "Hazardous alcohol use (AUDIT-C)"= "auditc_hazard",
+  "Absence of union"               = "no_union",
+  "Sexual harassment"             = "sex_harass",
+  "Female sex"                    = "sex_woman"
+)
+
+disc <- c()
+s3 <- purrr::imap_dfr(s3_vars, function(key, lab) {
+  x  <- d_lca[[key]]
+  nv <- naive_class_mean(x, modal4) * 100
+  bv <- bch_class_mean(x, bch$w)    * 100
+  disc <<- c(disc, max(abs(nv - bv)))
+  tibble::tibble(Covariate = lab,
+    C1 = sprintf("%.1f / %.1f", nv[1], bv[1]), C2 = sprintf("%.1f / %.1f", nv[2], bv[2]),
+    C3 = sprintf("%.1f / %.1f", nv[3], bv[3]), C4 = sprintf("%.1f / %.1f", nv[4], bv[4]))
+})
+
+## job satisfaction: mean (naive / BCH)
+{
+  js <- d_lca$job_sat
+  nv <- naive_class_mean(js, modal4); bv <- bch_class_mean(js, bch$w)
+  s3 <- dplyr::bind_rows(s3, tibble::tibble(Covariate = "Job satisfaction, mean",
+    C1 = sprintf("%.1f / %.1f", nv[1], bv[1]), C2 = sprintf("%.1f / %.1f", nv[2], bv[2]),
+    C3 = sprintf("%.1f / %.1f", nv[3], bv[3]), C4 = sprintf("%.1f / %.1f", nv[4], bv[4])))
+}
+
+cat(sprintf("Max absolute naive-BCH discrepancy: %.1f pp\n", suppressWarnings(max(disc))))
+s3 |> knitr::kable("markdown", caption = "Table S3. Sensitivity: class-specific estimates (naive / BCH).")
+```
+
+## Export tables and session info
+
+```{r}
+#| label: export
+#| results: "hold"
+
+source("R/export_leadership_results.R")
+export_leadership_results(environment())
+```
+
+```{r}
+#| label: session-info
+sessionInfo()
+```

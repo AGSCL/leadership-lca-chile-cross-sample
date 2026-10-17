@@ -1,0 +1,209 @@
+class,cat,p,item,label,type
+C1 Constructive,Never,0.9138161871300523,lid_des1,Humiliates employees,Destructive
+C1 Constructive,Sometimes,0.06819399065683927,lid_des1,Humiliates employees,Destructive
+C1 Constructive,Fairly often,0.01385016305695102,lid_des1,Humiliates employees,Destructive
+C1 Constructive,Almost always/always,0.004139659156157473,lid_des1,Humiliates employees,Destructive
+C2 Passive/absent,Never,0.9222807959778896,lid_des1,Humiliates employees,Destructive
+C2 Passive/absent,Sometimes,0.06180741899539872,lid_des1,Humiliates employees,Destructive
+C2 Passive/absent,Fairly often,0.0033853495272554756,lid_des1,Humiliates employees,Destructive
+C2 Passive/absent,Almost always/always,0.01252643549945613,lid_des1,Humiliates employees,Destructive
+C3 Active constructive,Never,0.9229734001164658,lid_des1,Humiliates employees,Destructive
+C3 Active constructive,Sometimes,0.05730784740985903,lid_des1,Humiliates employees,Destructive
+C3 Active constructive,Fairly often,0.005981236970304246,lid_des1,Humiliates employees,Destructive
+C3 Active constructive,Almost always/always,0.013737515503370913,lid_des1,Humiliates employees,Destructive
+C4 Ambivalent/destructive,Never,0.622284945527492,lid_des1,Humiliates employees,Destructive
+C4 Ambivalent/destructive,Sometimes,0.29879345648815114,lid_des1,Humiliates employees,Destructive
+C4 Ambivalent/destructive,Fairly often,0.06794159049751039,lid_des1,Humiliates employees,Destructive
+C4 Ambivalent/destructive,Almost always/always,0.010980007486846341,lid_des1,Humiliates employees,Destructive
+C1 Constructive,Never,0.17997809037483495,lid_des2,Encourages creative ideas,Constructive
+C1 Constructive,Sometimes,0.24762560485487892,lid_des2,Encourages creative ideas,Constructive
+C1 Constructive,Fairly often,0.4781388957176543,lid_des2,Encourages creative ideas,Constructive
+C1 Constructive,Almost always/always,0.0942574090526319,lid_des2,Encourages creative ideas,Constructive
+C2 Passive/absent,Never,0.8146610770575027,lid_des2,Encourages creative ideas,Constructive
+C2 Passive/absent,Sometimes,0.07240382192761745,lid_des2,Encourages creative ideas,Constructive
+C2 Passive/absent,Fairly often,0.084718638193675,lid_des2,Encourages creative ideas,Constructive
+C2 Passive/absent,Almost always/always,0.028216462821204776,lid_des2,Encourages creative ideas,Constructive
+C3 Active constructive,Never,0.2137214868388724,lid_des2,Encourages creative ideas,Constructive
+C3 Active constructive,Sometimes,0.21307946846371684,lid_des2,Encourages creative ideas,Constructive
+C3 Active constructive,Fairly often,0.21926896563946655,lid_des2,Encourages creative ideas,Constructive
+C3 Active constructive,Almost always/always,0.3539300790579442,lid_des2,Encourages creative ideas,Constructive
+C4 Ambivalent/destructive,Never,0.3496298641465133,lid_des2,Encourages creative ideas,Constructive
+C4 Ambivalent/destructive,Sometimes,0.4899445491367067,lid_des2,Encourages creative ideas,Constructive
+C4 Ambivalent/destructive,Fairly often,0.11610302755629436,lid_des2,Encourages creative ideas,Constructive
+C4 Ambivalent/destructive,Almost always/always,0.04432255916048566,lid_des2,Encourages creative ideas,Constructive
+C1 Constructive,Never,0.720991835274167,lid_des4,Gestures of displeasure,Destructive
+C1 Constructive,Sometimes,0.177216001870201,lid_des4,Gestures of displeasure,Destructive
+C1 Constructive,Fairly often,0.09131606316755995,lid_des4,Gestures of displeasure,Destructive
+C1 Constructive,Almost always/always,0.010476099688071927,lid_des4,Gestures of displeasure,Destructive
+C2 Passive/absent,Never,0.9140214974013655,lid_des4,Gestures of displeasure,Destructive
+C2 Passive/absent,Sometimes,0.03307288117059581,lid_des4,Gestures of displeasure,Destructive
+C2 Passive/absent,Fairly often,0.03654909124979989,lid_des4,Gestures of displeasure,Destructive
+C2 Passive/absent,Almost always/always,0.016356530178238758,lid_des4,Gestures of displeasure,Destructive
+C3 Active constructive,Never,0.7903001329214704,lid_des4,Gestures of displeasure,Destructive
+C3 Active constructive,Sometimes,0.12229234342093441,lid_des4,Gestures of displeasure,Destructive
+C3 Active constructive,Fairly often,0.0321323260514516,lid_des4,Gestures of displeasure,Destructive
+C3 Active constructive,Almost always/always,0.055275197606143536,lid_des4,Gestures of displeasure,Destructive
+C4 Ambivalent/destructive,Never,0.4692337705397688,lid_des4,Gestures of displeasure,Destructive
+C4 Ambivalent/destructive,Sometimes,0.39165313294601134,lid_des4,Gestures of displeasure,Destructive
+C4 Ambivalent/destructive,Fairly often,0.08846295314460843,lid_des4,Gestures of displeasure,Destructive
+C4 Ambivalent/destructive,Almost always/always,0.05065014336961165,lid_des4,Gestures of displeasure,Destructive
+C1 Constructive,Never,0.6549843137507041,lid_des5,Avoids making decisions,Laissez-faire
+C1 Constructive,Sometimes,0.2683394052029751,lid_des5,Avoids making decisions,Laissez-faire
+C1 Constructive,Fairly often,0.07129551025367264,lid_des5,Avoids making decisions,Laissez-faire
+C1 Constructive,Almost always/always,0.0053807707926482535,lid_des5,Avoids making decisions,Laissez-faire
+C2 Passive/absent,Never,0.9019279582883603,lid_des5,Avoids making decisions,Laissez-faire
+C2 Passive/absent,Sometimes,0.06262211650441075,lid_des5,Avoids making decisions,Laissez-faire
+C2 Passive/absent,Fairly often,0.022777838956007507,lid_des5,Avoids making decisions,Laissez-faire
+C2 Passive/absent,Almost always/always,0.01267208625122147,lid_des5,Avoids making decisions,Laissez-faire
+C3 Active constructive,Never,0.6683870382571633,lid_des5,Avoids making decisions,Laissez-faire
+C3 Active constructive,Sometimes,0.22487187713600426,lid_des5,Avoids making decisions,Laissez-faire
+C3 Active constructive,Fairly often,0.031607596919329,lid_des5,Avoids making decisions,Laissez-faire
+C3 Active constructive,Almost always/always,0.07513348768750357,lid_des5,Avoids making decisions,Laissez-faire
+C4 Ambivalent/destructive,Never,0.31236969613606336,lid_des5,Avoids making decisions,Laissez-faire
+C4 Ambivalent/destructive,Sometimes,0.5310167411214615,lid_des5,Avoids making decisions,Laissez-faire
+C4 Ambivalent/destructive,Fairly often,0.11087711874673985,lid_des5,Avoids making decisions,Laissez-faire
+C4 Ambivalent/destructive,Almost always/always,0.04573644399573505,lid_des5,Avoids making decisions,Laissez-faire
+C1 Constructive,Never,0.08866706235394599,lid_des6,Recognizes good performance,Constructive
+C1 Constructive,Sometimes,0.13558169692787536,lid_des6,Recognizes good performance,Constructive
+C1 Constructive,Fairly often,0.6444435897677063,lid_des6,Recognizes good performance,Constructive
+C1 Constructive,Almost always/always,0.13130765095047234,lid_des6,Recognizes good performance,Constructive
+C2 Passive/absent,Never,0.7842635850592824,lid_des6,Recognizes good performance,Constructive
+C2 Passive/absent,Sometimes,0.06347796499387433,lid_des6,Recognizes good performance,Constructive
+C2 Passive/absent,Fairly often,0.09859456352616125,lid_des6,Recognizes good performance,Constructive
+C2 Passive/absent,Almost always/always,0.05366388642068199,lid_des6,Recognizes good performance,Constructive
+C3 Active constructive,Never,0.09290020364803522,lid_des6,Recognizes good performance,Constructive
+C3 Active constructive,Sometimes,0.13154141961733387,lid_des6,Recognizes good performance,Constructive
+C3 Active constructive,Fairly often,0.17394323128700293,lid_des6,Recognizes good performance,Constructive
+C3 Active constructive,Almost always/always,0.601615145447628,lid_des6,Recognizes good performance,Constructive
+C4 Ambivalent/destructive,Never,0.2222041393098435,lid_des6,Recognizes good performance,Constructive
+C4 Ambivalent/destructive,Sometimes,0.5264947974003518,lid_des6,Recognizes good performance,Constructive
+C4 Ambivalent/destructive,Fairly often,0.18350460498445803,lid_des6,Recognizes good performance,Constructive
+C4 Ambivalent/destructive,Almost always/always,0.06779645830534681,lid_des6,Recognizes good performance,Constructive
+C1 Constructive,Never,0.533887823072717,lid_des7,Avoids involvement in work,Laissez-faire
+C1 Constructive,Sometimes,0.26771092690156967,lid_des7,Avoids involvement in work,Laissez-faire
+C1 Constructive,Fairly often,0.1668298018798089,lid_des7,Avoids involvement in work,Laissez-faire
+C1 Constructive,Almost always/always,0.031571448145904464,lid_des7,Avoids involvement in work,Laissez-faire
+C2 Passive/absent,Never,0.8614660258793752,lid_des7,Avoids involvement in work,Laissez-faire
+C2 Passive/absent,Sometimes,0.07976436276576017,lid_des7,Avoids involvement in work,Laissez-faire
+C2 Passive/absent,Fairly often,0.0238708130256018,lid_des7,Avoids involvement in work,Laissez-faire
+C2 Passive/absent,Almost always/always,0.034898798329262924,lid_des7,Avoids involvement in work,Laissez-faire
+C3 Active constructive,Never,0.5862472658000126,lid_des7,Avoids involvement in work,Laissez-faire
+C3 Active constructive,Sometimes,0.20344972313139323,lid_des7,Avoids involvement in work,Laissez-faire
+C3 Active constructive,Fairly often,0.07327261865900338,lid_des7,Avoids involvement in work,Laissez-faire
+C3 Active constructive,Almost always/always,0.13703039240959058,lid_des7,Avoids involvement in work,Laissez-faire
+C4 Ambivalent/destructive,Never,0.28358311977245587,lid_des7,Avoids involvement in work,Laissez-faire
+C4 Ambivalent/destructive,Sometimes,0.5790305379070747,lid_des7,Avoids involvement in work,Laissez-faire
+C4 Ambivalent/destructive,Fairly often,0.08950240309322323,lid_des7,Avoids involvement in work,Laissez-faire
+C4 Ambivalent/destructive,Almost always/always,0.04788393922724624,lid_des7,Avoids involvement in work,Laissez-faire
+C1 Constructive,Never,0.8849828728163216,lid_des8,Spreads false information,Destructive
+C1 Constructive,Sometimes,0.056821466186909746,lid_des8,Spreads false information,Destructive
+C1 Constructive,Fairly often,0.051781335732897546,lid_des8,Spreads false information,Destructive
+C1 Constructive,Almost always/always,0.006414325263871041,lid_des8,Spreads false information,Destructive
+C2 Passive/absent,Never,0.9550551563044316,lid_des8,Spreads false information,Destructive
+C2 Passive/absent,Sometimes,0.023011419427550982,lid_des8,Spreads false information,Destructive
+C2 Passive/absent,Fairly often,0.015850861866659613,lid_des8,Spreads false information,Destructive
+C2 Passive/absent,Almost always/always,0.006082562401357939,lid_des8,Spreads false information,Destructive
+C3 Active constructive,Never,0.910462082530055,lid_des8,Spreads false information,Destructive
+C3 Active constructive,Sometimes,0.05134443985394596,lid_des8,Spreads false information,Destructive
+C3 Active constructive,Fairly often,0.00954585261631889,lid_des8,Spreads false information,Destructive
+C3 Active constructive,Almost always/always,0.028647624999680252,lid_des8,Spreads false information,Destructive
+C4 Ambivalent/destructive,Never,0.6186676146492969,lid_des8,Spreads false information,Destructive
+C4 Ambivalent/destructive,Sometimes,0.3094388026553483,lid_des8,Spreads false information,Destructive
+C4 Ambivalent/destructive,Fairly often,0.0499863355495452,lid_des8,Spreads false information,Destructive
+C4 Ambivalent/destructive,Almost always/always,0.02190724714580976,lid_des8,Spreads false information,Destructive
+C1 Constructive,Never,0.6676818694497223,lid_des9,Absent when needed,Laissez-faire
+C1 Constructive,Sometimes,0.2509301644130877,lid_des9,Absent when needed,Laissez-faire
+C1 Constructive,Fairly often,0.07623467839054247,lid_des9,Absent when needed,Laissez-faire
+C1 Constructive,Almost always/always,0.005153287746647468,lid_des9,Absent when needed,Laissez-faire
+C2 Passive/absent,Never,0.8943711056955537,lid_des9,Absent when needed,Laissez-faire
+C2 Passive/absent,Sometimes,0.05919772097524738,lid_des9,Absent when needed,Laissez-faire
+C2 Passive/absent,Fairly often,0.022649710092880814,lid_des9,Absent when needed,Laissez-faire
+C2 Passive/absent,Almost always/always,0.023781463236318065,lid_des9,Absent when needed,Laissez-faire
+C3 Active constructive,Never,0.7612101833921606,lid_des9,Absent when needed,Laissez-faire
+C3 Active constructive,Sometimes,0.15298703267392222,lid_des9,Absent when needed,Laissez-faire
+C3 Active constructive,Fairly often,0.03776966394049764,lid_des9,Absent when needed,Laissez-faire
+C3 Active constructive,Almost always/always,0.04803311999341951,lid_des9,Absent when needed,Laissez-faire
+C4 Ambivalent/destructive,Never,0.3326200395344418,lid_des9,Absent when needed,Laissez-faire
+C4 Ambivalent/destructive,Sometimes,0.4978384231734477,lid_des9,Absent when needed,Laissez-faire
+C4 Ambivalent/destructive,Fairly often,0.1330713794974254,lid_des9,Absent when needed,Laissez-faire
+C4 Ambivalent/destructive,Almost always/always,0.03647015779468526,lid_des9,Absent when needed,Laissez-faire
+C1 Constructive,Never,0.8973356262384915,lid_des10,Berates by phone / rude email,Destructive
+C1 Constructive,Sometimes,0.04623984902089602,lid_des10,Berates by phone / rude email,Destructive
+C1 Constructive,Fairly often,0.056424524740612554,lid_des10,Berates by phone / rude email,Destructive
+C1 Constructive,Almost always/always,8.238189504994287e-61,lid_des10,Berates by phone / rude email,Destructive
+C2 Passive/absent,Never,0.9725049105039489,lid_des10,Berates by phone / rude email,Destructive
+C2 Passive/absent,Sometimes,0.015310470501519981,lid_des10,Berates by phone / rude email,Destructive
+C2 Passive/absent,Fairly often,0.007007735441771832,lid_des10,Berates by phone / rude email,Destructive
+C2 Passive/absent,Almost always/always,0.005176883552759107,lid_des10,Berates by phone / rude email,Destructive
+C3 Active constructive,Never,0.9346836083280454,lid_des10,Berates by phone / rude email,Destructive
+C3 Active constructive,Sometimes,0.049803508651547236,lid_des10,Berates by phone / rude email,Destructive
+C3 Active constructive,Fairly often,0.004136613502153256,lid_des10,Berates by phone / rude email,Destructive
+C3 Active constructive,Almost always/always,0.011376269518254127,lid_des10,Berates by phone / rude email,Destructive
+C4 Ambivalent/destructive,Never,0.6849175871986791,lid_des10,Berates by phone / rude email,Destructive
+C4 Ambivalent/destructive,Sometimes,0.25296171624681835,lid_des10,Berates by phone / rude email,Destructive
+C4 Ambivalent/destructive,Fairly often,0.05052287029488983,lid_des10,Berates by phone / rude email,Destructive
+C4 Ambivalent/destructive,Almost always/always,0.011597826259612667,lid_des10,Berates by phone / rude email,Destructive
+C1 Constructive,Never,0.09136132501266463,lid_des11,Seeks to develop capabilities,Constructive
+C1 Constructive,Sometimes,0.15160477071660508,lid_des11,Seeks to develop capabilities,Constructive
+C1 Constructive,Fairly often,0.6985297938910927,lid_des11,Seeks to develop capabilities,Constructive
+C1 Constructive,Almost always/always,0.05850411037963757,lid_des11,Seeks to develop capabilities,Constructive
+C2 Passive/absent,Never,0.9191371138268638,lid_des11,Seeks to develop capabilities,Constructive
+C2 Passive/absent,Sometimes,0.056232243552068004,lid_des11,Seeks to develop capabilities,Constructive
+C2 Passive/absent,Fairly often,0.024630642621068184,lid_des11,Seeks to develop capabilities,Constructive
+C2 Passive/absent,Almost always/always,3.9729601151163755e-58,lid_des11,Seeks to develop capabilities,Constructive
+C3 Active constructive,Never,0.0916517957159242,lid_des11,Seeks to develop capabilities,Constructive
+C3 Active constructive,Sometimes,0.10742602960939748,lid_des11,Seeks to develop capabilities,Constructive
+C3 Active constructive,Fairly often,0.20111591394402595,lid_des11,Seeks to develop capabilities,Constructive
+C3 Active constructive,Almost always/always,0.5998062607306522,lid_des11,Seeks to develop capabilities,Constructive
+C4 Ambivalent/destructive,Never,0.24125701010470352,lid_des11,Seeks to develop capabilities,Constructive
+C4 Ambivalent/destructive,Sometimes,0.6257494962555303,lid_des11,Seeks to develop capabilities,Constructive
+C4 Ambivalent/destructive,Fairly often,0.10435859285418823,lid_des11,Seeks to develop capabilities,Constructive
+C4 Ambivalent/destructive,Almost always/always,0.028634900785577986,lid_des11,Seeks to develop capabilities,Constructive
+C1 Constructive,Never,0.10475977655964366,lid_des12,Sets clear objectives,Constructive
+C1 Constructive,Sometimes,0.13800500909390417,lid_des12,Sets clear objectives,Constructive
+C1 Constructive,Fairly often,0.7023110249357098,lid_des12,Sets clear objectives,Constructive
+C1 Constructive,Almost always/always,0.05492418941074227,lid_des12,Sets clear objectives,Constructive
+C2 Passive/absent,Never,0.8953702121578033,lid_des12,Sets clear objectives,Constructive
+C2 Passive/absent,Sometimes,0.05458024387516857,lid_des12,Sets clear objectives,Constructive
+C2 Passive/absent,Fairly often,0.020317968675571823,lid_des12,Sets clear objectives,Constructive
+C2 Passive/absent,Almost always/always,0.029731575291456334,lid_des12,Sets clear objectives,Constructive
+C3 Active constructive,Never,0.10347527041833562,lid_des12,Sets clear objectives,Constructive
+C3 Active constructive,Sometimes,0.07997926249284436,lid_des12,Sets clear objectives,Constructive
+C3 Active constructive,Fairly often,0.1307186362660489,lid_des12,Sets clear objectives,Constructive
+C3 Active constructive,Almost always/always,0.6858268308227712,lid_des12,Sets clear objectives,Constructive
+C4 Ambivalent/destructive,Never,0.1897707181243737,lid_des12,Sets clear objectives,Constructive
+C4 Ambivalent/destructive,Sometimes,0.6186317482668002,lid_des12,Sets clear objectives,Constructive
+C4 Ambivalent/destructive,Fairly often,0.14654852356872192,lid_des12,Sets clear objectives,Constructive
+C4 Ambivalent/destructive,Almost always/always,0.04504901004010427,lid_des12,Sets clear objectives,Constructive
+C1 Constructive,Never,0.016014996667792197,lid_des13,Defines / explains tasks,Constructive
+C1 Constructive,Sometimes,0.03792824723881555,lid_des13,Defines / explains tasks,Constructive
+C1 Constructive,Fairly often,0.8328985353270176,lid_des13,Defines / explains tasks,Constructive
+C1 Constructive,Almost always/always,0.11315822076637463,lid_des13,Defines / explains tasks,Constructive
+C2 Passive/absent,Never,0.8585475364456178,lid_des13,Defines / explains tasks,Constructive
+C2 Passive/absent,Sometimes,0.0520760485771406,lid_des13,Defines / explains tasks,Constructive
+C2 Passive/absent,Fairly often,0.06282682663567603,lid_des13,Defines / explains tasks,Constructive
+C2 Passive/absent,Almost always/always,0.026549588341565667,lid_des13,Defines / explains tasks,Constructive
+C3 Active constructive,Never,0.018614455576967743,lid_des13,Defines / explains tasks,Constructive
+C3 Active constructive,Sometimes,0.01838481511531431,lid_des13,Defines / explains tasks,Constructive
+C3 Active constructive,Fairly often,0.06503605920664285,lid_des13,Defines / explains tasks,Constructive
+C3 Active constructive,Almost always/always,0.8979646701010751,lid_des13,Defines / explains tasks,Constructive
+C4 Ambivalent/destructive,Never,0.15271934328490916,lid_des13,Defines / explains tasks,Constructive
+C4 Ambivalent/destructive,Sometimes,0.5672873659891955,lid_des13,Defines / explains tasks,Constructive
+C4 Ambivalent/destructive,Fairly often,0.19883181629847996,lid_des13,Defines / explains tasks,Constructive
+C4 Ambivalent/destructive,Almost always/always,0.0811614744274153,lid_des13,Defines / explains tasks,Constructive
+C1 Constructive,Never,0.007119193588537651,lid_des14,"Flexible, open to innovation",Constructive
+C1 Constructive,Sometimes,0.10383314086681164,lid_des14,"Flexible, open to innovation",Constructive
+C1 Constructive,Fairly often,0.8412636091707625,lid_des14,"Flexible, open to innovation",Constructive
+C1 Constructive,Almost always/always,0.04778405637388816,lid_des14,"Flexible, open to innovation",Constructive
+C2 Passive/absent,Never,0.8297021982439085,lid_des14,"Flexible, open to innovation",Constructive
+C2 Passive/absent,Sometimes,0.09416603466281721,lid_des14,"Flexible, open to innovation",Constructive
+C2 Passive/absent,Fairly often,0.04336182605886451,lid_des14,"Flexible, open to innovation",Constructive
+C2 Passive/absent,Almost always/always,0.0327699410344097,lid_des14,"Flexible, open to innovation",Constructive
+C3 Active constructive,Never,0.008250582226616579,lid_des14,"Flexible, open to innovation",Constructive
+C3 Active constructive,Sometimes,0.04296074902065938,lid_des14,"Flexible, open to innovation",Constructive
+C3 Active constructive,Fairly often,0.07555513297529827,lid_des14,"Flexible, open to innovation",Constructive
+C3 Active constructive,Almost always/always,0.8732335357774257,lid_des14,"Flexible, open to innovation",Constructive
+C4 Ambivalent/destructive,Never,0.17595256393082712,lid_des14,"Flexible, open to innovation",Constructive
+C4 Ambivalent/destructive,Sometimes,0.6469333242317803,lid_des14,"Flexible, open to innovation",Constructive
+C4 Ambivalent/destructive,Fairly often,0.14330245171519174,lid_des14,"Flexible, open to innovation",Constructive
+C4 Ambivalent/destructive,Almost always/always,0.03381166012220095,lid_des14,"Flexible, open to innovation",Constructive

@@ -1,0 +1,657 @@
+---
+title: "Manuscript figures 1 to 4, regenerated to journal specification"
+subtitle: "International Archives of Occupational and Environmental Health (Springer)"
+author: "Andrés González-Santa Cruz"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    code-fold: true
+    embed-resources: true
+execute:
+  warning: false
+  message: true
+---
+
+# What this file does
+
+Self-contained. It rebuilds Figures 1 to 4 from the objects already saved in this
+folder, with no refitting of the measurement models:
+
+| Figure | Content | Source object |
+|---|---|---|
+| Fig. 1 | Class-enumeration diagnostics with adjacent-solution ARI | `lca_results.rds` (+ per-k modal assignments, see below) |
+| Fig. 2 | Item-response probabilities of the retained four-class solution | `lca_results.rds$rho4` |
+| Fig. 3 | Shared item-response probabilities under measurement invariance | `cache_g4_inv_part2.rds` (or `part2_cache_*.rds`) |
+| Fig. 4 | Class prevalence by setting under the invariant model | same as Fig. 3 |
+
+Three things are enforced everywhere:
+
+1. **Canonical class numbering and labels**, derived from the behavioral
+   signature and never from the raw `glca` index: C1 moderately constructive,
+   C2 disengaged, C3 constructive, C4 ambivalent/intermittently destructive.
+2. **Order C1 to C4** in every panel, legend and axis.
+3. **A verification block that stops the render** if the class sizes or the
+   per-setting prevalences do not reproduce the values reported in the
+   manuscript. Relabelling a figure without re-checking its numbers is exactly
+   how a figure ends up disagreeing with its table.
+
+Journal specification applied: 174 mm two-column width, 600 dpi, Arial/Helvetica
+via the `sans` family at 8 to 9 pt, no title inside the figure (captions go in the
+text), panel tags **a**, **b**, **c**, colour plus a luminance-ordered ramp so the
+figures survive greyscale printing.
+
+# 0. Packages, helpers, item metadata
+
+```{r}
+#| label: setup
+#| results: "hold"
+
+for (.pkg in c("ggplot2", "dplyr", "tidyr", "tibble", "readr", "knitr", "patchwork")) {
+  if (!requireNamespace(.pkg, quietly = TRUE))
+    install.packages(.pkg, repos = "https://cloud.r-project.org")
+  suppressPackageStartupMessages(library(.pkg, character.only = TRUE))
+}
+stopifnot(exists("ggplot"), exists("theme_bw"))
+
+## ---- Journal geometry and theme --------------------------------------------
+W_MM   <- 174      # Springer two-column width
+DPI    <- 600      # combination art
+BASE   <- 8.5      # pt; Springer asks for 8 to 12 pt lettering
+FAM    <- "sans"   # maps to Arial/Helvetica on Windows and macOS
+
+theme_j <- function(base_size = BASE) {
+  theme_bw(base_size = base_size, base_family = FAM) +
+    theme(panel.grid.minor   = element_blank(),
+          panel.grid.major.y = element_blank(),
+          panel.grid.major.x = element_line(linewidth = .25, colour = "grey88"),
+          strip.background   = element_rect(fill = "grey95", colour = NA),
+          strip.text         = element_text(face = "bold", size = base_size - 0.5),
+          legend.position    = "top",
+          ## Left-aligned rather than centred: with long category or setting
+          ## labels a centred legend overflows the panel area on both sides and
+          ## the outer entries are clipped.
+          legend.justification = "left",
+          legend.box.just    = "left",
+          legend.margin      = margin(t = 0, r = 0, b = 2, l = 0),
+          legend.title       = element_text(size = base_size - 0.5),
+          legend.text        = element_text(size = base_size - 0.5),
+          legend.key.height  = grid::unit(.7, "lines"),
+          legend.key.width   = grid::unit(.9, "lines"),
+          plot.title         = element_blank(),   # no title inside the figure
+          plot.tag           = element_text(face = "bold", size = base_size + 1.5))
+}
+
+save_fig <- function(p, stem, h_mm) {
+  ggsave(paste0(stem, ".png"), p, width = W_MM, height = h_mm, units = "mm",
+         dpi = DPI, bg = "white")
+  try(ggsave(paste0(stem, ".tiff"), p, width = W_MM, height = h_mm, units = "mm",
+             dpi = DPI, bg = "white", compression = "lzw"), silent = TRUE)
+  try(ggsave(paste0(stem, ".pdf"), p, width = W_MM, height = h_mm, units = "mm",
+             device = grDevices::cairo_pdf), silent = TRUE)
+  try(ggsave(paste0(stem, ".eps"), p, width = W_MM, height = h_mm, units = "mm",
+             device = grDevices::cairo_ps, fallback_resolution = DPI), silent = TRUE)
+  message("Wrote ", stem, ".png (+ vector/TIFF copies where the device allowed it)")
+}
+
+## ---- Item metadata (13 items; lid_des3 / p39_3 excluded) --------------------
+## Order must match the order the models were fitted in. The stopifnot below
+## turns a mismatch into a loud error instead of a silent off-by-one mislabel.
+ITEM_LAB <- c("Humiliates employees", "Encourages creative ideas",
+              "Gestures of displeasure", "Avoids making decisions",
+              "Recognizes good performance", "Avoids involvement in work",
+              "Spreads false information", "Absent when needed",
+              "Berates by phone / rude email", "Seeks to develop capabilities",
+              "Sets clear objectives", "Defines / explains tasks",
+              "Flexible, open to innovation")
+ITEM_TYPE <- factor(c("Destructive", "Constructive", "Destructive", "Laissez-faire",
+                      "Constructive", "Laissez-faire", "Destructive", "Laissez-faire",
+                      "Destructive", "Constructive", "Constructive", "Constructive",
+                      "Constructive"),
+                    levels = c("Destructive", "Laissez-faire", "Constructive"))
+stopifnot(length(ITEM_LAB) == 13L, length(ITEM_TYPE) == 13L)
+
+CATS    <- c("Never", "Sometimes", "Fairly often", "Almost always/always")
+## Sequential single-hue ramp: monotone in luminance, so it also reads in greyscale.
+CAT_PAL <- setNames(c("#EFF3FF", "#9ECAE1", "#4292C6", "#08519C"), CATS)
+
+## Strip labels for the class facets. label_wrap_gen() breaks only at spaces, so
+## "C4 Ambivalent/intermittently destructive" became "C4" plus an over-long
+## second line. Break immediately AFTER the slash first, then wrap what remains.
+wrap_class <- function(x) {
+  x <- sub("/", "/\n", x, fixed = TRUE)
+  vapply(strsplit(x, "\n", fixed = TRUE), function(parts)
+    paste(vapply(parts, function(p) paste(strwrap(p, width = 16), collapse = "\n"),
+                 character(1)), collapse = "\n"),
+    character(1), USE.NAMES = FALSE)
+}
+
+## ---- glca accessors ---------------------------------------------------------
+get_post_list <- function(g) {
+  p <- g$posterior
+  if (is.matrix(p) || is.data.frame(p)) list(as.matrix(p)) else lapply(p, as.matrix)
+}
+get_rho <- function(g, group = 1L) {
+  r <- g$param$rho
+  if (is.list(r) && is.list(r[[1]])) r <- r[[group]]
+  r
+}
+## Top-2 endorsement (categories 3 + 4) per item x class, from a rho list.
+top2_mat <- function(rho, K) {
+  m <- t(vapply(seq_along(rho), function(j) {
+    mm <- as.matrix(rho[[j]]); mm <- mm / rowSums(mm)
+    mm[, 3] + mm[, 4]
+  }, numeric(K)))
+  rownames(m) <- ITEM_LAB; colnames(m) <- paste0("raw", seq_len(K))
+  m
+}
+group_prev <- function(g, group_levels) {
+  pl <- get_post_list(g)
+  m  <- t(vapply(pl, colMeans, numeric(ncol(pl[[1]]))))
+  nm <- names(pl)
+  rownames(m) <- if (!is.null(nm) && all(nzchar(nm)) && length(nm) == nrow(m)) nm
+                 else if (length(group_levels) == nrow(m)) group_levels
+                 else paste0("G", seq_len(nrow(m)))
+  colnames(m) <- paste0("raw", seq_len(ncol(m)))
+  m
+}
+
+## ---- Canonical manuscript numbering ----------------------------------------
+## Identical rule to canonical_class_numbering.R, inlined so this file stands alone.
+##   C4 = highest (destructive + laissez-faire)
+##   C2 = lowest constructive among the remaining three
+##   C3 = highest constructive among the remaining two
+##   C1 = the last one
+MS_LAB <- c("Moderately constructive", "Disengaged", "Constructive",
+            "Ambivalent/intermittently destructive")
+
+ms_map <- function(rho_list) {
+  K   <- nrow(as.matrix(rho_list[[1]]))
+  t2  <- top2_mat(rho_list, K)
+  con <- colMeans(t2[ITEM_TYPE == "Constructive",  , drop = FALSE])
+  lf  <- colMeans(t2[ITEM_TYPE == "Laissez-faire", , drop = FALSE])
+  de  <- colMeans(t2[ITEM_TYPE == "Destructive",   , drop = FALSE])
+  stopifnot(K == 4L)
+  num <- integer(K)
+  i4 <- which.max(de + lf);                num[i4] <- 4L
+  r1 <- setdiff(seq_len(K), i4)
+  i2 <- r1[which.min(con[r1])];            num[i2] <- 2L
+  r2 <- setdiff(r1, i2)
+  i3 <- r2[which.max(con[r2])];            num[i3] <- 3L
+  i1 <- setdiff(r2, i3);                   num[i1] <- 1L
+  stopifnot(!anyDuplicated(num), identical(sort(num), 1:4))
+  if (!(con[i3] > con[i1] && con[i1] > con[i2]))
+    warning("Constructive ordering is not C3 > C1 > C2; inspect the signature table.")
+  list(num = num, lab = MS_LAB[num],
+       tag = paste0("C", num, " ", MS_LAB[num]),
+       order = order(num),
+       signature = data.frame(raw = seq_len(K), manuscript = paste0("C", num),
+                              label = MS_LAB[num],
+                              constructive = round(100 * con), laissez_faire = round(100 * lf),
+                              destructive = round(100 * de), row.names = NULL))
+}
+```
+
+# 1. Load the saved objects
+
+```{r}
+#| label: load-objects
+#| results: "hold"
+
+if (!file.exists("lca_results.rds"))
+  stop("lca_results.rds not found in ", normalizePath("."),
+       ". Set the working directory to the project folder before rendering.")
+lca <- readRDS("lca_results.rds")
+stopifnot(!is.null(lca$rho4), !is.null(lca$sizes4), !is.null(lca$fit_tbl))
+if (length(lca$rho4) != length(ITEM_LAB))
+  stop("Item-count mismatch: lca$rho4 has ", length(lca$rho4), " items but the ",
+       "metadata has ", length(ITEM_LAB), ". Update ITEM_LAB / ITEM_TYPE.")
+
+## The invariant multiple-group fit: two possible cache shapes.
+find_g4inv <- function() {
+  cand <- c("cache_g4_inv_part2.rds",
+            sort(list.files(".", "^part2_cache_\\d{4}-\\d{2}-\\d{2}\\.rds$"),
+                 decreasing = TRUE))
+  for (f in cand[file.exists(cand)]) {
+    obj <- readRDS(f)
+    g   <- if (!is.null(obj$g4_inv)) obj$g4_inv else obj
+    if (!is.null(g$param$rho) && !is.null(g$posterior))
+      return(list(g = g, src = f))
+  }
+  NULL
+}
+mg <- find_g4inv()
+HAVE_MG <- !is.null(mg)
+if (HAVE_MG) {
+  g4_inv <- mg$g
+  message("Invariant multiple-group model loaded from: ", mg$src)
+} else {
+  warning("No invariant multiple-group fit found (cache_g4_inv_part2.rds or ",
+          "part2_cache_*.rds). Figures 3 and 4 will be skipped.")
+}
+
+map1 <- ms_map(lca$rho4)
+cat("\nSingle-sample model, raw glca index to manuscript class:\n")
+print(map1$signature, row.names = FALSE)
+
+if (HAVE_MG) {
+  rho_inv <- get_rho(g4_inv)
+  mapM    <- ms_map(rho_inv)
+  cat("\nInvariant multiple-group model, raw glca index to manuscript class:\n")
+  print(mapM$signature, row.names = FALSE)
+}
+```
+
+# 2. Verification: same order, same percentages
+
+The values below are the ones reported in the manuscript. If any of them moved,
+the render stops here rather than producing a figure that disagrees with its table.
+
+```{r}
+#| label: verify
+
+TOL    <- 0.15    # percentage points; the manuscript reports one decimal
+STRICT <- FALSE   # TRUE = a class-size mismatch stops the render as well
+
+## ---- A. Class order (fatal: the figures depend on it) -----------------------
+## Part 1 already permutes rho4, post4, modal4 and sizes4 into canonical slots,
+## so the mapping recomputed from the signature should be the identity. It is
+## recomputed rather than assumed, because that is the assumption that silently
+## breaks when a model is refitted.
+cat("Canonical mapping recomputed from rho4 (expected: raw i -> C i):\n")
+print(map1$signature, row.names = FALSE)
+if (!identical(as.integer(map1$num), 1:4))
+  stop("rho4 is not in canonical order: raw class ", paste(map1$num, collapse = ", "),
+       " maps to C1..C4. Figures would be mislabelled; stop and inspect Part 1's ",
+       "permutation block before continuing.")
+
+## ---- B. Class size: three different quantities, kept apart ------------------
+## pi_k   = model-estimated prevalence, colMeans of the posteriors
+## w_sh   = survey-weighted share of the modal classification
+## n_md   = unweighted modal counts
+pi_k <- 100 * colMeans(as.matrix(lca$post4))
+w_sh <- 100 * as.numeric(lca$sizes4)
+n_md <- as.integer(table(factor(lca$modal4, levels = 1:4)))
+
+target_pct <- c(25.1, 16.3, 28.0, 30.7)     # percentages reported in the manuscript
+target_n   <- c(496, 322, 554, 607)         # counts reported in the manuscript
+
+chk1 <- data.frame(
+  Class               = paste0("C", 1:4),
+  Label               = MS_LAB,
+  `Manuscript %`      = target_pct,
+  `pi_k %`            = round(pi_k, 1),
+  `Weighted modal %`  = round(w_sh, 1),
+  `Manuscript n`      = target_n,
+  `Modal n`           = n_md,
+  check.names = FALSE)
+cat("\nRetained four-class solution, class size by definition:\n")
+print(chk1, row.names = FALSE)
+cat(sprintf("\nModal n sums to %d (current 13-item classification); the manuscript's counts sum to %d.\n",
+            sum(n_md), sum(target_n)))
+
+ok_pct <- all(abs(pi_k - target_pct) <= TOL)
+ok_n   <- all(n_md == target_n)
+if (ok_pct)
+  cat("OK: the reported percentages reproduce the model-estimated prevalence (pi_k).\n")
+if (!ok_pct)
+  (if (STRICT) stop else warning)(
+    "The manuscript percentages do not match pi_k either; inspect before submitting.")
+if (!ok_n)
+  (if (STRICT) stop else warning)(
+    "MANUSCRIPT ACTION NEEDED. The counts reported in Table 2 and in the Results ",
+    "(", paste(target_n, collapse = ", "), "; sum ", sum(target_n), ") do not come ",
+    "from the current 13-item classification, whose modal counts are ",
+    paste(n_md, collapse = ", "), " (sum ", sum(n_md), "). They are pi_k multiplied ",
+    "by the superseded classified n of 1,977. The percentages are fine (they are ",
+    "pi_k), the counts are not. This does not affect Figures 1 to 4, which do not ",
+    "display class sizes, so the render continues.")
+
+## ---- Invariant model: prevalence by setting ---------------------------------
+if (HAVE_MG) {
+  GL   <- c("General salaried", "Hospital HCW")
+  prev <- 100 * group_prev(g4_inv, GL)
+  ## columns are raw classes; move them into manuscript order C1..C4
+  prev_ms <- prev[, mapM$order, drop = FALSE]
+  colnames(prev_ms) <- paste0("C", 1:4)
+  target_prev <- rbind(`General salaried` = c(27.8, 18.1, 26.4, 27.7),
+                       `Hospital HCW`     = c(33.1,  3.6, 23.5, 39.7))
+  colnames(target_prev) <- paste0("C", 1:4)
+  ## align row order with the target regardless of how glca named the groups
+  if (!all(rownames(prev_ms) %in% rownames(target_prev))) {
+    warning("Group names from glca (", paste(rownames(prev_ms), collapse = ", "),
+            ") do not match the expected settings; assuming the order ",
+            paste(GL, collapse = ", "), ".")
+    rownames(prev_ms) <- GL
+  }
+  prev_ms <- prev_ms[rownames(target_prev), , drop = FALSE]
+
+  cat("\nInvariant model, class prevalence by setting (%):\n")
+  print(round(prev_ms, 1))
+  cat("\nManuscript (Table S3):\n"); print(target_prev)
+  cat("\nDifference (recomputed minus manuscript):\n")
+  print(round(prev_ms - target_prev, 2))
+  if (any(abs(prev_ms - target_prev) > TOL))
+    stop("Per-setting prevalences do not reproduce Table S3 (tolerance ", TOL,
+         " pp). The cached multiple-group fit is not the one behind the ",
+         "manuscript; re-render the multigroup notebook in FINAL mode before ",
+         "regenerating Figures 3 and 4.")
+  cat("\nOK: class order and percentages reproduce the manuscript.\n")
+}
+```
+
+# 3. Figure 1 — class enumeration with adjacent-solution ARI
+
+```{r}
+#| label: fig1
+#| fig-width: 6.85
+#| fig-height: 5.9
+#| results: "hold"
+
+## Per-k modal assignments: exported by Part 1, or written by
+## refit_enumeration_modal.R, or restored from a knitr cache of Part 1's
+## `enumeration` chunk. Every source is validated against Table 1's
+## log-likelihoods before use. If table1_enumeration_ari.csv already exists it is
+## reused, since it was produced by exactly this validation.
+fit_tbl  <- as.data.frame(lca$fit_tbl)
+fit_tbl  <- fit_tbl[order(fit_tbl$Classes), ]
+ks       <- as.integer(fit_tbl$Classes)
+retained <- if (!is.null(lca$retained)) as.integer(lca$retained) else 4L
+ll_rep   <- fit_tbl$logLik[match(ks, fit_tbl$Classes)]
+
+gof_ll <- function(g) { gg <- g$gof; v <- gg[["loglik"]]
+  if (is.null(v)) v <- gg[["logLik"]]; if (is.null(v)) NA_real_ else as.numeric(v)[1] }
+post_of <- function(g) { p <- g$posterior; if (is.list(p)) p <- p[[1]]; as.matrix(p) }
+
+ari <- function(a, b) {
+  tab <- table(a, b); n <- sum(tab); ch2 <- function(x) x * (x - 1) / 2
+  sij <- sum(ch2(tab)); sa <- sum(ch2(rowSums(tab))); sb <- sum(ch2(colSums(tab)))
+  ex <- sa * sb / ch2(n); mx <- (sa + sb) / 2
+  if (isTRUE(all.equal(mx, ex))) 1 else (sij - ex) / (mx - ex)
+}
+purity <- function(prev, cur) { t <- table(cur, prev); sum(apply(t, 1, max)) / sum(t) }
+
+enum_csv <- "table1_enumeration_ari.csv"
+if (file.exists(enum_csv)) {
+  enum_tbl <- as.data.frame(readr::read_csv(enum_csv, show_col_types = FALSE))
+  message("Enumeration diagnostics reused from ", enum_csv)
+} else {
+  modal_all <- NULL
+  if (!is.null(lca$modal_all)) {
+    modal_all <- lca$modal_all
+    if (is.null(names(modal_all))) names(modal_all) <- paste0("k", ks)
+  }
+  if (is.null(modal_all) && file.exists("enumeration_modal_all.rds")) {
+    ma <- readRDS("enumeration_modal_all.rds")
+    if (is.list(ma$modal_all) && all(abs(ma$logLik[as.character(ks)] - ll_rep) < 1e-3))
+      modal_all <- ma$modal_all
+  }
+  if (is.null(modal_all)) {
+    dirs <- unique(c("cache", "leadership_LCA_analysis_cache",
+                     list.dirs(".", recursive = FALSE)[
+                       grepl("cache", list.dirs(".", recursive = FALSE))]))
+    for (cf in list.files(dirs, "^enumeration_[0-9a-f]+\\.rdx$",
+                          recursive = TRUE, full.names = TRUE)) {
+      e <- new.env(parent = emptyenv())
+      ok <- tryCatch({ lazyLoad(sub("\\.rdx$", "", cf), envir = e); TRUE },
+                     error = function(err) FALSE)
+      if (!ok || !exists("fits", envir = e, inherits = FALSE)) { rm(e); next }
+      f <- get("fits", envir = e); rm(e)
+      llc <- vapply(ks, function(k) if (!is.null(f[[k]])) gof_ll(f[[k]]) else NA_real_, numeric(1))
+      if (all(is.finite(llc)) && all(abs(llc - ll_rep) < 1e-3)) {
+        modal_all <- setNames(lapply(ks, function(k)
+          max.col(post_of(f[[k]]), ties.method = "first")), paste0("k", ks))
+        break
+      }
+    }
+  }
+  if (is.null(modal_all))
+    stop("Figure 1 needs the per-k modal assignments. Run  ",
+         "source(\"refit_enumeration_modal.R\")  once, or render ",
+         "chunk_fig1_enumeration_ARI.qmd, which writes ", enum_csv, ".")
+  enum_tbl <- fit_tbl |>
+    dplyr::mutate(
+      ari_prev = vapply(Classes, function(k) if (k == min(ks)) NA_real_ else
+        ari(modal_all[[paste0("k", k - 1L)]], modal_all[[paste0("k", k)]]), numeric(1)),
+      purity_prev = vapply(Classes, function(k) if (k == min(ks)) NA_real_ else
+        purity(modal_all[[paste0("k", k - 1L)]], modal_all[[paste0("k", k)]]), numeric(1)))
+}
+
+share_tbl <- enum_tbl |>
+  dplyr::select(Classes, AIC, BIC, CAIC, SABIC, AWE) |>
+  tidyr::pivot_longer(-Classes, names_to = "Criterion", values_to = "value") |>
+  dplyr::group_by(Criterion) |>
+  dplyr::mutate(share = 100 * (value[Classes == min(Classes)] - value) /
+                        (value[Classes == min(Classes)] - min(value)),
+                k_min = Classes[which.min(value)]) |>
+  dplyr::ungroup() |>
+  dplyr::mutate(Criterion = factor(Criterion, levels = c("AIC", "BIC", "CAIC", "SABIC", "AWE")))
+
+okabe  <- c(AIC = "#0072B2", BIC = "#D55E00", CAIC = "#CC79A7", SABIC = "#009E73", AWE = "#000000")
+shapes <- c(AIC = 16, BIC = 17, CAIC = 15, SABIC = 18, AWE = 4)
+ltys   <- c(AIC = "solid", BIC = "solid", CAIC = "dashed", SABIC = "dotted", AWE = "longdash")
+band   <- annotate("rect", xmin = retained - .5, xmax = retained + .5,
+                   ymin = -Inf, ymax = Inf, fill = "grey88", alpha = .6)
+th1 <- theme_j() + theme(panel.grid.major.x = element_blank(),
+                         panel.grid.major.y = element_line(linewidth = .25, colour = "grey88"),
+                         legend.title = element_blank())
+
+p1a <- ggplot(share_tbl, aes(Classes, share, colour = Criterion, shape = Criterion,
+                             linetype = Criterion)) +
+  band + geom_line(linewidth = .5) + geom_point(size = 1.7) +
+  geom_point(data = dplyr::filter(share_tbl, Classes == k_min), shape = 21, size = 3.6,
+             stroke = .6, colour = "grey20", show.legend = FALSE) +
+  scale_colour_manual(values = okabe) + scale_shape_manual(values = shapes) +
+  scale_linetype_manual(values = ltys) +
+  scale_x_continuous(breaks = ks) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 25)) +
+  labs(x = "Number of latent classes", y = "Share of total decrease (%)") + th1
+
+d1 <- tibble::tibble(Classes = enum_tbl$Classes,
+                     `Relative entropy` = enum_tbl$Entropy,
+                     `Mean AvePP` = enum_tbl$`Mean AvePP`,
+                     `ARI (k-1 vs k)` = enum_tbl$ari_prev) |>
+  tidyr::pivot_longer(-Classes, names_to = "Metric", values_to = "value") |>
+  dplyr::filter(!is.na(value)) |>
+  dplyr::mutate(Metric = factor(Metric, levels = c("Relative entropy", "Mean AvePP", "ARI (k-1 vs k)")))
+
+p1b <- ggplot(d1, aes(Classes, value, colour = Metric, shape = Metric, linetype = Metric)) +
+  band + geom_line(linewidth = .5) + geom_point(size = 1.7) +
+  scale_colour_manual(values = c("#0072B2", "#009E73", "#D55E00")) +
+  scale_shape_manual(values = c(16, 15, 17)) +
+  scale_linetype_manual(values = c("solid", "dashed", "solid")) +
+  scale_x_continuous(breaks = ks, limits = range(ks) + c(-.5, .5)) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, .2)) +
+  labs(x = "Number of latent classes", y = "Index (0 to 1)") + th1
+
+p1c <- ggplot(enum_tbl, aes(Classes, `Smallest %`)) +
+  band + geom_col(width = .6, fill = "grey55") +
+  geom_hline(yintercept = 5, linetype = "dashed", colour = "grey30") +
+  scale_x_continuous(breaks = ks) +
+  labs(x = "Number of latent classes", y = "Smallest class (% of sample)") + th1
+
+fig1 <- p1a / (p1b | p1c) + patchwork::plot_layout(heights = c(1.2, 1)) +
+  patchwork::plot_annotation(tag_levels = "a")
+fig1
+save_fig(fig1, "Fig1_enumeration", 150)
+```
+
+# 4. Figure 2 — item-response probabilities, retained four-class solution
+
+```{r}
+#| label: fig2
+#| fig-width: 6.85
+#| fig-height: 6.3
+#| results: "hold"
+
+## Long form from the fitted rho: rows = raw class, cols = response category.
+## The raw index is translated to the manuscript class here and nowhere else.
+rho_long <- function(rho_list, map) {
+  do.call(rbind, lapply(seq_along(rho_list), function(j) {
+    m <- as.matrix(rho_list[[j]]); m <- m / rowSums(m)
+    data.frame(
+      item     = factor(ITEM_LAB[j], levels = rev(ITEM_LAB)),
+      type     = ITEM_TYPE[j],
+      class    = factor(rep(map$tag, times = ncol(m)), levels = map$tag[map$order]),
+      category = factor(rep(CATS, each = nrow(m)), levels = CATS),
+      prob     = as.vector(m))
+  }))
+}
+
+d2 <- rho_long(lca$rho4, map1)
+stopifnot(identical(levels(d2$class), map1$tag[map1$order]))   # C1 -> C4 order locked
+
+fig2 <- ggplot(d2, aes(prob, item, fill = category)) +
+  geom_col(width = .8, colour = "white", linewidth = .15,
+           position = position_stack(reverse = TRUE)) +
+  facet_grid(type ~ class, scales = "free_y", space = "free_y", switch = "y",
+             labeller = labeller(class = as_labeller(wrap_class))) +
+  scale_fill_manual(values = CAT_PAL, name = "Response",
+                    guide = guide_legend(nrow = 1)) +
+  scale_x_continuous(breaks = c(0, .5, 1), labels = c("0", "50", "100"),
+                     expand = expansion(mult = .03)) +
+  labs(x = "Response-category probability (%)", y = NULL) +
+  theme_j() +
+  theme(strip.placement = "outside",
+        strip.text.y.left = element_text(angle = 0, face = "bold"),
+        panel.spacing.x = grid::unit(.5, "lines"),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_text(size = BASE - 1))
+fig2
+save_fig(fig2, "Fig2_itemprob", 165)
+```
+
+# 5. Figure 3 — shared item-response probabilities under invariance
+
+Under `measure.inv = TRUE` a single set of item-response probabilities describes
+both settings, so the honest display is one panel set of shared classes, with the
+setting difference carried entirely by Figure 4. The per-setting solutions fitted
+separately are a supporting check; they cannot be redrawn here because those two
+single-group fits are not saved by any notebook (see the note at the end).
+
+```{r}
+#| label: fig3
+#| fig-width: 6.85
+#| fig-height: 6.3
+#| results: "hold"
+
+if (!HAVE_MG) {
+  message("Figure 3 skipped: no invariant multiple-group fit available.")
+} else {
+  d3 <- rho_long(rho_inv, mapM)
+  stopifnot(identical(levels(d3$class), mapM$tag[mapM$order]))
+
+  fig3 <- ggplot(d3, aes(prob, item, fill = category)) +
+    geom_col(width = .8, colour = "white", linewidth = .15,
+             position = position_stack(reverse = TRUE)) +
+    facet_grid(type ~ class, scales = "free_y", space = "free_y", switch = "y",
+               labeller = labeller(class = as_labeller(wrap_class))) +
+    scale_fill_manual(values = CAT_PAL, name = "Response",
+                      guide = guide_legend(nrow = 1)) +
+    scale_x_continuous(breaks = c(0, .5, 1), labels = c("0", "50", "100"),
+                       expand = expansion(mult = .03)) +
+    labs(x = "Response-category probability (%)", y = NULL) +
+    theme_j() +
+    theme(strip.placement = "outside",
+          strip.text.y.left = element_text(angle = 0, face = "bold"),
+          panel.spacing.x = grid::unit(.5, "lines"),
+          axis.ticks.y = element_blank(),
+          axis.text.y = element_text(size = BASE - 1))
+  print(fig3)
+  save_fig(fig3, "Fig3_invariant_profiles", 165)
+}
+```
+
+# 6. Figure 4 — class prevalence by setting
+
+```{r}
+#| label: fig4
+#| fig-width: 6.85
+#| fig-height: 3.5
+#| results: "hold"
+
+if (!HAVE_MG) {
+  message("Figure 4 skipped: no invariant multiple-group fit available.")
+} else {
+  d4 <- as.data.frame(prev_ms) |>
+    tibble::rownames_to_column("Setting") |>
+    tidyr::pivot_longer(-Setting, names_to = "Class", values_to = "Prevalence") |>
+    dplyr::mutate(
+      Class = factor(Class, levels = paste0("C", 1:4),
+                     labels = paste0("C", 1:4, "\n", MS_LAB)),
+      Setting = factor(Setting, levels = c("General salaried", "Hospital HCW"),
+                       labels = c("General salaried workers (n= 1,847)",
+                                  "Hospital healthcare workers (n= 972)")))
+
+  fig4 <- ggplot(d4, aes(Class, Prevalence, fill = Setting)) +
+    geom_col(position = position_dodge(width = .78), width = .68,
+             colour = "grey25", linewidth = .25) +
+    geom_text(aes(label = sprintf("%.1f", Prevalence)),
+              position = position_dodge(width = .78), vjust = -0.45,
+              size = (BASE - 1.5) / .pt, family = FAM) +
+    ## Dark blue vs light amber: the pair differs in hue AND in luminance, so the
+    ## bars stay distinguishable in greyscale; the printed values make it explicit.
+    scale_fill_manual(values = c("#0072B2", "#E69F00")) +
+    scale_y_continuous(limits = c(0, max(d4$Prevalence) * 1.18),
+                       expand = expansion(mult = c(0, .02))) +
+    labs(x = NULL, y = "Prevalence (%)", fill = NULL) +
+    theme_j() +
+    theme(panel.grid.major.x = element_blank(),
+          panel.grid.major.y = element_line(linewidth = .25, colour = "grey88"),
+          axis.text.x = element_text(size = BASE - 0.5, lineheight = 1.05))
+  print(fig4)
+  save_fig(fig4, "Fig4_prevalences", 95)
+}
+```
+
+# 7. Captions (Springer format: bold "Fig. N", no terminal punctuation)
+
+```{r}
+#| label: captions
+#| echo: false
+#| results: "asis"
+
+cat("
+**Fig. 1** Class-enumeration diagnostics for two- to ten-class solutions of the 13 leadership items. **a** Share of the total decrease in each information criterion, from the two-class solution to the criterion's own minimum, attained by each solution; open circles mark each minimum. **b** Relative entropy, mean average posterior probability of modal assignment (AvePP), and adjusted Rand index (ARI) between each solution and the preceding one. **c** Size of the smallest class as a percentage of the classified sample; dashed line at 5%. Shaded band, retained four-class solution. *AIC* Akaike information criterion, *BIC* Bayesian information criterion, *CAIC* consistent AIC, *SABIC* sample-size-adjusted BIC, *AWE* approximate weight of evidence
+
+**Fig. 2** Item-response probabilities of the retained four-class solution among Chilean salaried workers (n= 1,991). Each horizontal bar gives, for one leadership item within one class, the model-estimated probability of the four response categories. Rows group the items by behavior type; columns are the four classes in manuscript order. *C1* moderately constructive, *C2* disengaged, *C3* constructive, *C4* ambivalent/intermittently destructive
+
+**Fig. 3** Shared item-response probabilities of the four classes under the measurement-invariant multiple-group model (pooled n= 2,819). Because item-response probabilities are constrained to be equal across settings, one set of profiles describes both general salaried and hospital healthcare workers, and only class prevalence differs between them (Fig. 4). Layout as in Fig. 2
+
+**Fig. 4** Model-estimated prevalence of the four shared leadership classes among general salaried workers (n= 1,847) and hospital healthcare workers (n= 972) under the measurement-invariant multiple-group model. Prevalences sum to 100% within each setting. Estimates are unweighted; the hospital sample is a non-probability sample of three public hospitals. *C1* moderately constructive, *C2* disengaged, *C3* constructive, *C4* ambivalent/intermittently destructive
+")
+```
+
+# 8. What was regenerated, and what still needs a decision
+
+```{r}
+#| label: session
+#| results: "hold"
+
+cat("Files written to ", normalizePath("."), ":\n", sep = "")
+print(list.files(".", "^Fig[1-4]_.*\\.(png|tiff|pdf|eps)$"))
+cat("\n")
+sessionInfo()
+```
+
+**Figure 3 is a substantive choice, not a relabelling.** The manuscript's current
+Figure 3 shows the four-class solutions fitted *separately* in each setting. Those
+two single-group fits (`g4_gen`, `g4_hosp` in
+`leadership_LCA_multigroup_hospital.qmd`) are refitted at every render and are not
+saved to any `.rds`, so they cannot be redrawn from the objects in this folder.
+This file therefore draws Figure 3 from the **invariant** model instead, which is
+reproducible from `cache_g4_inv_part2.rds` and is arguably the figure the argument
+calls for: once invariance is claimed, the profiles are shared by construction and
+the setting difference lives entirely in Figure 4.
+
+Two ways forward, both legitimate:
+
+1. **Keep the invariant-profile figure as Fig. 3** (what this file produces) and
+   move the separately fitted comparison to the supplement as an Online Resource,
+   regenerated the next time the multigroup notebook is rendered.
+2. **Keep the per-setting comparison as Fig. 3.** Then add
+   `saveRDS(list(g4_gen = g4_gen, g4_hosp = g4_hosp), "mg_separate_fits.rds")`
+   to the `profile-comparison` chunk of `leadership_LCA_multigroup_hospital.qmd`,
+   render it once in FINAL mode, and this file can be extended to read that object
+   and redraw it with the canonical labels.

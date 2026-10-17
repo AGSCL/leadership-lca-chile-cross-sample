@@ -1,0 +1,392 @@
+---
+title: "Leadership LCA - Part 2 (sensitivity): Table 4 re-estimated WITHOUT job satisfaction"
+subtitle: "Adjusted ML three-step ORs and RORs, general vs hospital, 7 covariates"
+author: "Andrés González-Santa Cruz"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    df-print: paged
+    embed-resources: true
+execute:
+  warning: false
+  message: true
+---
+
+# What this notebook does
+
+Table 4 of the manuscript reports adjusted ML three-step odds ratios mutually
+adjusting for **8 covariates** (7 binary + job satisfaction), estimated separately
+in the general and hospital samples from the **shared, measurement-invariant**
+four-class multiple-group model, and compared as ratios of odds ratios (ROR).
+
+This notebook reproduces **exactly the same table with the same code path**, with a
+single change: **job satisfaction is removed from the adjustment set**. Everything
+else (data harmonisation, the invariant multiple-group fit, the reference class,
+`ml3step_multi()`, the ridge fallback, the ROR / Cochran Q / I2 math, Holm and BH
+corrections, and the output formatting) is inherited **verbatim** from
+`leadership_LCA_analysis_part2_sample_comparison.qmd` rather than re-typed here, so
+any drift between the two notebooks is impossible by construction.
+
+**Motivation.** Job satisfaction is moderately to strongly correlated with
+effort-reward imbalance, frequent negative acts, and self-labeled bullying. Holding
+it constant conditions on a variable that is plausibly downstream of both
+supervisory behavior and mistreatment, so the mistreatment ORs in Table 4 are
+estimated within strata of a likely consequence of the exposure. This notebook
+quantifies how much of the attenuation in Table 4 is attributable to that single
+covariate.
+
+**How the inheritance works.** The chunks of Part 2 are parsed out of the source
+`.qmd` by chunk label and evaluated in order in this session. No code is copied.
+
+---
+
+# 0. Configuration
+
+```{r}
+#| label: config
+#| results: "hold"
+
+## IMPORTANT: Part 2's `setup` chunk begins with `rm(list = ls())`. Anything this
+## notebook leaves in the global environment before that chunk runs is destroyed.
+## The configuration is therefore stored in an OPTION, which survives rm(), and the
+## inheritance driver runs inside local() so its own variables are out of reach.
+options(nojobsat.cfg = list(
+  ## Source notebook whose chunks are inherited verbatim.
+  PART2_QMD = "leadership_LCA_analysis_part2_sample_comparison.qmd",
+  ## The invariant multiple-group fit with n.init = 4000 is the expensive step
+  ## (minutes). Cache it so re-renders of this sensitivity notebook are cheap.
+  ## DELETE the cache if Part 2's data preparation or n_init ever change.
+  USE_CACHE = TRUE,
+  CACHE_RDS = "cache_g4_inv_part2.rds",
+  ## Covariate dropped from the adjustment set.
+  DROP_COV  = "job_sat"
+))
+
+local({
+  cfg <- getOption("nojobsat.cfg")
+  stopifnot(file.exists(cfg$PART2_QMD))
+  cat("Source notebook:", normalizePath(cfg$PART2_QMD), "\n")
+  cat("Dropping covariate:", cfg$DROP_COV, "\n")
+})
+```
+
+# 1. Inherit Part 2's chunks verbatim
+
+```{r}
+#| label: inherit
+#| results: "hold"
+
+## ---- parse fenced R chunks of a .qmd into a named list of code strings -----
+## Matches ```{r} ... ``` blocks and reads the chunk label from the '#| label:'
+## option line. Chunks without a label are ignored (Part 2 labels all of them).
+parse_qmd_chunks <- function(path) {
+  ln    <- readLines(path, warn = FALSE)
+  open  <- grep("^```\\{r\\b",  ln)
+  close <- grep("^```\\s*$",    ln)
+  out   <- list()
+  for (o in open) {
+    e <- close[close > o][1]
+    if (is.na(e)) next
+    body  <- ln[(o + 1):(e - 1)]
+    lab   <- sub("^#\\|\\s*label:\\s*", "", grep("^#\\|\\s*label:", body, value = TRUE)[1])
+    if (is.na(lab)) next
+    ## strip the YAML-ish chunk options; keep the R code
+    code  <- body[!grepl("^#\\|", body)]
+    out[[trimws(lab)]] <- paste(code, collapse = "\n")
+  }
+  out
+}
+
+## ---- neutralise Part 2's interactive cleanup ------------------------------
+## `setup` starts with `rm(list = ls()); gc()`. Evaluated here that would wipe the
+## driver state mid-loop (this is what caused "objeto 'lab' no encontrado").
+## Replace ONLY the rm() call, keeping the statement syntactically valid.
+sanitize_chunk <- function(code)
+  gsub("rm\\(\\s*list\\s*=\\s*ls\\(\\)\\s*\\)", "invisible(NULL)", code)
+
+## Chunks required to reach the adjusted-model stage. Ordered as in Part 2.
+##   setup           packages, n_init gate, seeds
+##   load-data       paths, item crosswalk, cov_keys, harmonisation, `combo`
+##   item-meta       behaviour type + English labels for the 13 items
+##   helpers-part2   entropy, posterior list, group prevalences, item probs
+##   fit-invariant   the measurement-INVARIANT four-class multiple-group model
+##   per-group-post  post_g / modal_g / post_h / modal_h + alignment guards
+##   shared-labels   lab_inv, ref_class (reference profile chosen from rho)
+##   s3-helpers      ml3step, class_matrix, ml3step_ref, ml3step_multi
+## The driver runs inside local(): `chunks`, `NEEDED` and the loop variable live in
+## a temporary environment, so even a chunk that clears the global environment
+## cannot destroy them mid-loop. Part 2's code is still evaluated in globalenv(),
+## exactly as a normal render would.
+local({
+  cfg    <- getOption("nojobsat.cfg")
+  chunks <- parse_qmd_chunks(cfg$PART2_QMD)
+  cat("Chunks found in Part 2:", length(chunks), "\n")
+
+  NEEDED <- c("setup", "load-data", "item-meta", "helpers-part2",
+              "fit-invariant", "per-group-post", "shared-labels", "s3-helpers")
+
+  missing <- setdiff(NEEDED, names(chunks))
+  if (length(missing))
+    stop("Part 2 chunk labels not found: ", paste(missing, collapse = ", "),
+         ". The source notebook changed; update NEEDED.")
+
+  run_chunk <- function(lab) {
+    message("== running Part 2 chunk: ", lab)
+    eval(parse(text = sanitize_chunk(chunks[[lab]])), envir = globalenv())
+    invisible(TRUE)
+  }
+
+  for (lab in NEEDED) {
+    if (lab == "fit-invariant" && cfg$USE_CACHE && file.exists(cfg$CACHE_RDS)) {
+      message("== fit-invariant: loading cached g4_inv from ", cfg$CACHE_RDS)
+      assign("g4_inv", readRDS(cfg$CACHE_RDS), envir = globalenv())
+      next
+    }
+    run_chunk(lab)
+    if (lab == "fit-invariant" && cfg$USE_CACHE)
+      saveRDS(get("g4_inv", envir = globalenv()), cfg$CACHE_RDS)
+  }
+})
+
+stopifnot(exists("combo"), exists("cov_keys"), exists("g4_inv"),
+          exists("post_g"), exists("modal_g"), exists("post_h"), exists("modal_h"),
+          exists("ref_class"), exists("lab_inv"), exists("ml3step_multi"))
+cat("\nInherited state OK. Reference class = raw glca index C", ref_class, " (", lab_inv[ref_class],
+    "); the manuscript number is assigned in section 2b.\n", sep = "")
+cat("Covariates available (Part 2 set):", paste(cov_keys, collapse = ", "), "\n")
+```
+
+# 2. Drop job satisfaction from the adjustment set
+
+```{r}
+#| label: drop-cov
+#| results: "hold"
+
+## Re-materialise the config in the global environment. Safe from here on: the
+## only chunk that clears globalenv is Part 2's `setup`, which has already run.
+DROP_COV <- getOption("nojobsat.cfg")$DROP_COV
+
+stopifnot(DROP_COV %in% cov_keys)
+
+cov_keys_full <- cov_keys                       # keep the 8-covariate vector
+cov_keys      <- setdiff(cov_keys_full, DROP_COV)   # 7 covariates from here on
+
+cat("Adjustment set reduced from", length(cov_keys_full), "to", length(cov_keys),
+    "covariates.\n")
+cat("Retained:", paste(cov_keys, collapse = ", "), "\n")
+```
+
+# 2b. Manuscript class numbering
+
+`glca` returns the classes in an arbitrary order, so the raw index printed by the
+inherited code (`C2 vs C1`) has no substantive meaning and had to be renumbered by
+hand for the manuscript. That manual step is where a table can end up contradicting
+Table 2. `canonical_class_numbering.R` derives the manuscript numbering from the
+behavioral signature of each class (C1 moderately constructive, C2 disengaged,
+C3 constructive and the reference, C4 ambivalent/intermittently destructive) and
+stops if the reference used by the three-step models is not the constructive class.
+Every table below prints that numbering, so its rows can be pasted as they are.
+
+```{r}
+#| label: canonical-numbering
+#| results: "hold"
+
+source("canonical_class_numbering.R")
+
+stopifnot(exists("ms_num"), exists("ms_lab"), exists("ms_contrast"),
+          ms_num[ref_class] == 3L)
+cat(sprintf("Reference: raw C%d -> manuscript C%d (%s).\n",
+            ref_class, ms_num[ref_class], ms_lab[ref_class]))
+```
+
+# 3. Adjusted fit, 7 covariates {#adjusted-7}
+
+Identical to Part 2's `p2-adj-fit`: same samples, same invariant posteriors, same
+`ml3step_multi()` with `lambda = 0` and the ridge fallback at `lambda = 0.1` on
+near-separation. The only difference is that `Z` now has 7 columns.
+
+```{r}
+#| label: adj-fit-7
+#| results: "hold"
+
+gen_df_adj  <- combo[combo$setting == "General salaried", ]
+hosp_df_adj <- combo[combo$setting == "Hospital HCW",    ]
+
+## NOTE: no job_sat standardisation here - the covariate is gone. Every other
+## covariate is already 0/1 (1 = exposed) from Part 2's harmonisation.
+
+Z_gen  <- as.matrix(gen_df_adj[ , cov_keys])
+Z_hosp <- as.matrix(hosp_df_adj[, cov_keys])
+
+fit_adj <- function(Z, post, modal, ref, label) {
+  m <- ml3step_multi(Z, post, modal, ref = ref, lambda = 0)
+  need_ridge <- m$conv != 0 || anyNA(m$ors$se) || any(abs(m$ors$b) > 5, na.rm = TRUE)
+  if (need_ridge) {
+    message(label, ": near-separation detected (lambda=0) - refitting with lambda=0.1")
+    m <- ml3step_multi(Z, post, modal, ref = ref, lambda = 0.1)
+  }
+  message(sprintf("%s: n_complete=%d/%d, lambda=%.1f, conv=%d",
+                  label, m$n_complete, m$n_total, m$lambda, m$conv))
+  m
+}
+
+adj_gen7  <- fit_adj(Z_gen,  post_g, modal_g, ref = ref_class, label = "General (7 cov)")
+adj_hosp7 <- fit_adj(Z_hosp, post_h, modal_h, ref = ref_class, label = "Hospital (7 cov)")
+```
+
+# 4. Table 4 without job satisfaction {#table4-nojobsat}
+
+```{r}
+#| label: adj-table-7
+#| results: "hold"
+
+cov_labs_adj <- c(
+  eri           = "Effort-reward imbalance",
+  auditc_hazard = "Hazardous alcohol use (AUDIT-C)",
+  no_union      = "Absence of union",
+  naq_frequent  = "Frequent negative acts (NAQ)",
+  bully_self    = "Self-labeled bullying",
+  sex_harass    = "Sexual harassment",
+  sex_woman     = "Female sex"
+)
+
+fmt_ci_adj <- function(or, lo, hi) sprintf("%.2f (%.2f-%.2f)", or, lo, hi)
+z196 <- 1.96
+
+gen_adj_side  <- adj_gen7$ors  |> dplyr::select(covariate, class,
+  OR_gen = OR, lo_gen = lo, hi_gen = hi, b_gen = b, se_gen = se)
+hosp_adj_side <- adj_hosp7$ors |> dplyr::select(covariate, class,
+  OR_hosp = OR, lo_hosp = lo, hi_hosp = hi, b_hosp = b, se_hosp = se)
+
+adj_ror7 <- dplyr::inner_join(gen_adj_side, hosp_adj_side,
+                              by = c("covariate", "class")) |>
+  dplyr::mutate(
+    logROR   = b_hosp - b_gen,
+    seLogROR = sqrt(se_gen^2 + se_hosp^2),
+    ROR      = exp(logROR),
+    ROR_lo   = exp(logROR - z196 * seLogROR),
+    ROR_hi   = exp(logROR + z196 * seLogROR),
+    Q        = (logROR / seLogROR)^2,
+    p_Q      = stats::pchisq(Q, df = 1, lower.tail = FALSE),
+    I2       = pmax(0, (Q - 1) / Q) * 100,
+    Covariate = unname(cov_labs_adj[covariate]),
+    Profile   = ms_contrast(class, ref_class)   # manuscript numbering, not the raw index
+  ) |>
+  dplyr::arrange(match(covariate, cov_keys), ms_num[class]) |>
+  dplyr::mutate(
+    p_holm = p.adjust(p_Q, method = "holm"),
+    q_BH   = p.adjust(p_Q, method = "BH"),
+    flag   = dplyr::case_when(
+      !is.na(q_BH) & q_BH < 0.05 ~ "*+",
+      !is.na(p_Q)  & p_Q  < 0.05 ~ "*",
+      TRUE ~ ""))
+
+fmt_p_adj <- function(p) ifelse(is.na(p), "-", ifelse(p < 0.001, "<0.001", sprintf("%.3f", p)))
+
+adj_em_tbl7 <- adj_ror7 |>
+  dplyr::transmute(
+    Covariate,
+    Contrast               = Profile,
+    `OR general (95% CI)`  = fmt_ci_adj(OR_gen,  lo_gen,  hi_gen),
+    `OR hospital (95% CI)` = fmt_ci_adj(OR_hosp, lo_hosp, hi_hosp),
+    `ROR (95% CI)`         = paste0(fmt_ci_adj(ROR, ROR_lo, ROR_hi), flag),
+    `Cochran Q`            = sprintf("%.2f", Q),
+    `p`                    = fmt_p_adj(p_Q),
+    `p (Holm)`             = fmt_p_adj(p_holm),
+    `q (BH)`               = fmt_p_adj(q_BH),
+    `I2 (%)`               = sprintf("%.0f", I2)
+  )
+
+knitr::kable(
+  adj_em_tbl7, format = "html",
+  caption = sprintf(
+    "Table 4 (sensitivity). Effect modification by sample - adjusted ML three-step ORs (95%% CI) mutually adjusting for %d covariates, EXCLUDING job satisfaction. ROR = OR(hospital)/OR(general). Reference = C%d %s. General: lambda=%.1f, n=%d/%d. Hospital: lambda=%.1f, n=%d/%d.",
+    length(cov_keys), ms_num[ref_class], ms_lab[ref_class],
+    adj_gen7$lambda,  adj_gen7$n_complete,  adj_gen7$n_total,
+    adj_hosp7$lambda, adj_hosp7$n_complete, adj_hosp7$n_total))
+```
+
+# 5. Side-by-side: with vs without job satisfaction {#comparison}
+
+The 8-covariate estimates are re-fitted here from the same objects, so the
+comparison is internal to this render and cannot pick up a stale Table 4.
+
+```{r}
+#| label: compare-8-vs-7
+#| results: "hold"
+
+Z_gen8  <- as.matrix(gen_df_adj[ , cov_keys_full])
+Z_hosp8 <- as.matrix(hosp_df_adj[, cov_keys_full])
+
+## Part 2 standardises job satisfaction within each sample before the fit.
+Z_gen8[,  DROP_COV] <- as.numeric(scale(Z_gen8[,  DROP_COV]))
+Z_hosp8[, DROP_COV] <- as.numeric(scale(Z_hosp8[, DROP_COV]))
+
+adj_gen8  <- fit_adj(Z_gen8,  post_g, modal_g, ref = ref_class, label = "General (8 cov)")
+adj_hosp8 <- fit_adj(Z_hosp8, post_h, modal_h, ref = ref_class, label = "Hospital (8 cov)")
+
+side <- function(fit, tag) fit$ors |>
+  dplyr::transmute(covariate, class,
+                   !!paste0("OR_", tag) := OR,
+                   !!paste0("lo_", tag) := lo,
+                   !!paste0("hi_", tag) := hi)
+
+cmp <- dplyr::inner_join(side(adj_gen8, "8"), side(adj_gen7, "7"),
+                         by = c("covariate", "class")) |>
+  dplyr::filter(covariate != DROP_COV) |>
+  dplyr::mutate(
+    Covariate = unname(cov_labs_adj[covariate]),
+    Contrast  = ms_contrast(class, ref_class),   # manuscript numbering
+    `General, 8 cov (with job sat.)` = fmt_ci_adj(OR_8, lo_8, hi_8),
+    `General, 7 cov (without)`       = fmt_ci_adj(OR_7, lo_7, hi_7),
+    `% change in OR`                 = sprintf("%+.1f", 100 * (OR_7 / OR_8 - 1))) |>
+  dplyr::arrange(match(covariate, cov_keys), ms_num[class]) |>
+  dplyr::select(Covariate, Contrast, `General, 8 cov (with job sat.)`,
+                `General, 7 cov (without)`, `% change in OR`)
+
+knitr::kable(cmp, format = "html",
+  caption = "General sample only: adjusted ORs with and without job satisfaction in the adjustment set. A large positive change means job satisfaction was absorbing much of that covariate's association with class membership.")
+```
+
+# 6. Exports
+
+```{r}
+#| label: exports
+#| results: "hold"
+
+readr::write_csv(adj_em_tbl7, "table4_adjusted_nojobsat_formatted.csv")
+readr::write_csv(adj_ror7,    "table4_adjusted_nojobsat_values.csv")
+readr::write_csv(cmp,         "table4_adjusted_8vs7_comparison.csv")
+cat("Written:\n - table4_adjusted_nojobsat_formatted.csv\n",
+    "- table4_adjusted_nojobsat_values.csv\n",
+    "- table4_adjusted_8vs7_comparison.csv\n")
+```
+
+# 7. Reading guide
+
+- The formatted table in Section 4 is a drop-in replacement for Table 4 if the
+  7-covariate specification becomes the reported one. Column names already match
+  the manuscript header (`Covariate`, `Contrast`, `OR general (95% CI)`,
+  `OR hospital (95% CI)`, `ROR (95% CI)`, `Cochran Q`, `p`, `I2 (%)`); the extra
+  `p (Holm)` and `q (BH)` columns are dropped in the manuscript version.
+- Section 5 is the substantive output: it isolates how much each association in
+  Table 4 was being absorbed by job satisfaction.
+- Complete-case `n` will differ slightly from Table 4, because rows missing job
+  satisfaction are no longer dropped. The printed `n_complete/n_total` in the
+  caption is the authoritative denominator for this specification.
+- Class numbering is the MANUSCRIPT one (C1 moderately constructive, C2 disengaged,
+  C3 constructive and the reference, C4 ambivalent/intermittently destructive),
+  assigned from the behavioral signature by `canonical_class_numbering.R` and
+  printed directly by every table above. No hand relabelling is needed any more,
+  and the raw `glca` index is never shown. The crosswalk for the current fit is
+  printed by the `canonical-numbering` chunk; check it against Table 2 once.
+
+# Session information
+
+```{r}
+#| label: session-info
+sessionInfo()
+```

@@ -1,0 +1,83 @@
+/* Bottle Rocket palette: mustard yellow, jumpsuit red, navy, cream. */
+:root {
+  --br-yellow: #fad510;
+  --br-red: #cb2314;
+  --br-navy: #273046;
+  --br-green: #354823;
+  --br-cream: #fbf3dc;
+  --br-paper: #fffaf0;
+}
+
+body {
+  background: var(--br-cream);
+  color: var(--br-navy);
+  font-family: Futura, "Century Gothic", "Trebuchet MS", "Segoe UI", sans-serif;
+  font-size: 17px;
+  line-height: 1.65;
+}
+
+/* Symmetric title banner */
+#title-block-header .quarto-title-banner {
+  background: var(--br-yellow);
+  color: var(--br-navy);
+  border-bottom: 6px solid var(--br-red);
+  text-align: center;
+  padding: 2.2rem 1rem 1.6rem;
+}
+#title-block-header h1.title {
+  color: var(--br-navy);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+#title-block-header .subtitle {
+  color: var(--br-red);
+  font-style: italic;
+}
+#title-block-header .description {
+  color: var(--br-navy);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.quarto-title-meta-heading { color: var(--br-red); opacity: 1; letter-spacing: 0.1em; }
+.quarto-title-author-orcid img { height: 1em; width: 1em; }
+
+h2 {
+  color: var(--br-red);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 3px double var(--br-navy);
+  padding-bottom: 0.25rem;
+  margin-top: 2.4rem;
+}
+h3 {
+  color: var(--br-navy);
+  background: var(--br-yellow);
+  display: inline-block;
+  padding: 0.15rem 0.7rem;
+  border-left: 8px solid var(--br-red);
+  font-size: 1.25rem;
+  margin-top: 2rem;
+}
+
+a { color: var(--br-red); font-weight: 700; text-decoration-thickness: 2px; }
+a:hover { color: var(--br-navy); background: var(--br-yellow); }
+
+/* Callouts and tables as cream cards */
+.callout { background: var(--br-paper); border: 2px solid var(--br-navy); border-radius: 0; }
+.callout-note { border-left: 10px solid var(--br-red) !important; }
+table { background: var(--br-paper); border: 2px solid var(--br-navy); }
+thead { background: var(--br-navy); color: var(--br-cream); }
+thead th { color: var(--br-cream); }
+
+pre, code { background: #f4e7bd; color: var(--br-navy); border-radius: 0; }
+pre { border: 2px solid var(--br-navy); }
+
+#TOC .active, #TOC a.active { color: var(--br-red); border-left-color: var(--br-red); }
+
+.nav-footer, footer { color: var(--br-navy); }
+
+@media (max-width: 576px) {
+  body { font-size: 16px; }
+  #title-block-header h1.title { font-size: 1.6rem; }
+}

@@ -1,0 +1,14 @@
+label,type,C1,C2,C3,C4
+Humiliates employees,Destructive,0.02,0.02,0.02,0.08
+Encourages creative ideas,Constructive,0.57,0.11,0.57,0.16
+Gestures of displeasure,Destructive,0.1,0.05,0.09,0.14
+Avoids making decisions,Laissez-faire,0.08,0.04,0.11,0.16
+Recognizes good performance,Constructive,0.78,0.15,0.78,0.25
+Avoids involvement in work,Laissez-faire,0.2,0.06,0.21,0.14
+Spreads false information,Destructive,0.06,0.02,0.04,0.07
+Absent when needed,Laissez-faire,0.08,0.05,0.09,0.17
+Berates by phone / rude email,Destructive,0.06,0.01,0.02,0.06
+Seeks to develop capabilities,Constructive,0.76,0.02,0.8,0.13
+Sets clear objectives,Constructive,0.76,0.05,0.82,0.19
+Defines / explains tasks,Constructive,0.95,0.09,0.96,0.28
+"Flexible, open to innovation",Constructive,0.89,0.08,0.95,0.18

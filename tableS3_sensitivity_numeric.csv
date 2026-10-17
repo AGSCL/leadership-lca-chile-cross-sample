@@ -1,0 +1,33 @@
+variable,covariate,class,class_label,naive,bch,difference,units,weighting
+eri,Effort-reward imbalance,C1,C1 Constructive,27.074235807860266,25.115517382787584,-1.9587184250726821,percent; difference in percentage points,unweighted
+eri,Effort-reward imbalance,C2,C2 Passive/absent,36.423841059602644,35.47380324768974,-0.9500378119129067,percent; difference in percentage points,unweighted
+eri,Effort-reward imbalance,C3,C3 Active constructive,29.693486590038315,29.402808176487564,-0.29067841355075075,percent; difference in percentage points,unweighted
+eri,Effort-reward imbalance,C4,C4 Ambivalent/destructive,56.46017699115045,57.83461644534421,1.3744394541937623,percent; difference in percentage points,unweighted
+bully_self,Self-labeled bullying,C1,C1 Constructive,3.056768558951965,2.4720429338855925,-0.5847256250663726,percent; difference in percentage points,unweighted
+bully_self,Self-labeled bullying,C2,C2 Passive/absent,3.9867109634551494,3.5164936740893307,-0.47021728936581875,percent; difference in percentage points,unweighted
+bully_self,Self-labeled bullying,C3,C3 Active constructive,3.4682080924855487,3.3668787684419526,-0.10132932404359618,percent; difference in percentage points,unweighted
+bully_self,Self-labeled bullying,C4,C4 Ambivalent/destructive,12.299465240641712,12.758319006531089,0.4588537658893763,percent; difference in percentage points,unweighted
+naq_frequent,Frequent negative acts (NAQ),C1,C1 Constructive,3.9301310043668125,3.561959821922274,-0.3681711824445384,percent; difference in percentage points,unweighted
+naq_frequent,Frequent negative acts (NAQ),C2,C2 Passive/absent,6.291390728476822,6.127993112636847,-0.16339761583997436,percent; difference in percentage points,unweighted
+naq_frequent,Frequent negative acts (NAQ),C3,C3 Active constructive,3.065134099616858,2.9485462995819205,-0.1165878000349374,percent; difference in percentage points,unweighted
+naq_frequent,Frequent negative acts (NAQ),C4,C4 Ambivalent/destructive,10.442477876106194,10.756852397556207,0.3143745214500129,percent; difference in percentage points,unweighted
+auditc_hazard,Hazardous alcohol use (AUDIT-C),C1,C1 Constructive,29.475982532751093,29.967444502440454,0.49146196968936096,percent; difference in percentage points,unweighted
+auditc_hazard,Hazardous alcohol use (AUDIT-C),C2,C2 Passive/absent,20.86092715231788,20.276994817891584,-0.5839323344262972,percent; difference in percentage points,unweighted
+auditc_hazard,Hazardous alcohol use (AUDIT-C),C3,C3 Active constructive,20.88122605363985,20.60681629022744,-0.27440976341241097,percent; difference in percentage points,unweighted
+auditc_hazard,Hazardous alcohol use (AUDIT-C),C4,C4 Ambivalent/destructive,28.49557522123894,28.608190024727502,0.11261480348856168,percent; difference in percentage points,unweighted
+no_union,Absence of union,C1,C1 Constructive,61.79039301310044,61.856099375874464,0.06570636277402286,percent; difference in percentage points,unweighted
+no_union,Absence of union,C2,C2 Passive/absent,73.84105960264901,74.91776380676562,1.0767042041166093,percent; difference in percentage points,unweighted
+no_union,Absence of union,C3,C3 Active constructive,58.23754789272031,58.07265569323118,-0.16489219948913103,percent; difference in percentage points,unweighted
+no_union,Absence of union,C4,C4 Ambivalent/destructive,62.65486725663717,62.608415746746104,-0.046451509891063836,percent; difference in percentage points,unweighted
+sex_harass,Sexual harassment,C1,C1 Constructive,0.43859649122807015,0.25511226007676835,-0.1834842311513018,percent; difference in percentage points,unweighted
+sex_harass,Sexual harassment,C2,C2 Passive/absent,0.6666666666666667,0.5254635396775904,-0.14120312698907633,percent; difference in percentage points,unweighted
+sex_harass,Sexual harassment,C3,C3 Active constructive,0.9578544061302682,0.9440090586315308,-0.013845347498737337,percent; difference in percentage points,unweighted
+sex_harass,Sexual harassment,C4,C4 Ambivalent/destructive,3.0249110320284696,3.149492906597963,0.12458187456949332,percent; difference in percentage points,unweighted
+sex_woman,Female sex,C1,C1 Constructive,48.25327510917031,47.86421202266037,-0.3890630865099425,percent; difference in percentage points,unweighted
+sex_woman,Female sex,C2,C2 Passive/absent,55.29801324503312,55.61121650310674,0.3132032580736208,percent; difference in percentage points,unweighted
+sex_woman,Female sex,C3,C3 Active constructive,49.42528735632184,49.388947123953194,-0.036340232368644365,percent; difference in percentage points,unweighted
+sex_woman,Female sex,C4,C4 Ambivalent/destructive,53.27433628318584,53.44787763431127,0.17354135112542934,percent; difference in percentage points,unweighted
+job_sat,"Job satisfaction, mean",C1,C1 Constructive,15.427947598253276,15.509650299504186,0.08170270125090973,score points,unweighted
+job_sat,"Job satisfaction, mean",C2,C2 Passive/absent,14.298013245033113,14.289357421919927,-0.00865582311318569,score points,unweighted
+job_sat,"Job satisfaction, mean",C3,C3 Active constructive,15.99808429118774,16.041884740215135,0.04380044902739577,score points,unweighted
+job_sat,"Job satisfaction, mean",C4,C4 Ambivalent/destructive,13.734513274336283,13.654936506056078,-0.0795767682802051,score points,unweighted

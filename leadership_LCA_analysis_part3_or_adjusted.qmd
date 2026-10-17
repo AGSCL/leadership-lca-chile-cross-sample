@@ -1,0 +1,689 @@
+---
+title: "Leadership LCA - Part 3: Unadjusted and adjusted ML three-step odds ratios (reference = C3 Active constructive)"
+date: last-modified
+author: "Andres Gonzalez Santa Cruz"
+toc: true
+toc-location: left
+toc-float: true
+format:
+  html:
+    code-fold: true
+    embed-resources: true
+    self-contained: true
+    theme:
+      - journal
+    fig-cap-location: top
+    toc: true
+    toc-location: left
+execute:
+  error: true
+  echo: true
+  warning: true
+  message: true
+  freeze: auto
+editor: source
+execute-dir: project
+lightbox: auto
+---
+
+# Overview
+
+This notebook produces two supplementary odds-ratio tables for the leadership LCA
+manuscript, both using **C3 Active constructive** as the reference profile.
+
+| Output | Description | Section |
+|---|---|---|
+| **Table U** | Unadjusted ML three-step ORs (one covariate at a time, ref = C3) | *Unadjusted ORs* |
+| **Table A** | Adjusted ML three-step ORs (all 8 covariates simultaneously, ref = C3) | *Adjusted ORs* |
+| **Table C** | Side-by-side comparison: unadjusted vs adjusted | *Comparison* |
+
+**Rationale for C3 as reference.** C3 Active constructive is the empirically
+healthiest profile: highest constructive endorsement (mean top-2 = 0.81 across
+6 items), lowest destructive (0.04), highest job satisfaction (median 16.0),
+lowest NAQ-frequent (2.7%) and lowest self-labeled bullying (2.7%). Note that C2
+carries the hardcoded label "Constructive" in earlier drafts but item-response
+probabilities show it has the *lowest* endorsement on all 13 items (constructive
+mean 0.08) — it is the **Passive/absent** profile. C3 is the correct healthy
+reference for occupational health interpretation.
+
+**Estimator.** Both tables use the same bias-adjusted **ML three-step** estimator
+as Part 1 (`ml3step()` from Vermunt, 2010). The measurement model (four-class
+general-sample model, 4000 random starts, seed 2125) is loaded from
+`lca_results.rds` (produced by Part 1) — no re-fitting is needed here. The
+posterior matrix `post4` and modal assignments `modal4` are taken from that saved
+object.
+
+**Adjusted model.** The multivariable estimator (`ml3step_multi()`) maximises the
+same likelihood as the univariate version but includes all 8 covariates
+simultaneously (7 binary + job satisfaction continuous): each OR is conditional
+on the remaining seven. Survey weights are
+applied throughout. Complete-case analysis is used for the adjusted model (rows
+missing any of the 7 covariates are dropped for the structural step only; the
+measurement classification matrix D is always computed on the full measurement
+sample).
+
+> **Dependency.** Part 3 requires that `lca_results.rds` was written by a recent
+> render of Part 1 that includes `post4` (added to the export chunk). If
+> `lca_results.rds` predates that edit, re-render Part 1 once first.
+
+```{r}
+#| label: setup
+#| results: "hold"
+
+rm(list = ls()); gc()
+
+required_packages <- c(
+  "dplyr", "tidyr", "tibble", "purrr",
+  "haven", "readr", "janitor",
+  "knitr", "kableExtra"
+)
+invisible(lapply(required_packages, function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE))
+    install.packages(pkg, repos = "https://cloud.r-project.org")
+  suppressPackageStartupMessages(library(pkg, character.only = TRUE))
+}))
+
+set.seed(2125)
+options(scipen = 999)
+```
+
+## Load raw data and rebuild analysis frame
+
+The analysis data frame `d_lca` is rebuilt from the raw `.rds` exactly as in
+Part 1 (same complete-case filter on 13 items + `sex_woman`). The covariates are
+recoded to 0/1 using the same `yes_levels` as Part 1.
+
+```{r}
+#| label: load-data
+#| results: "hold"
+
+resolve_drive_path <- function(rel,
+    roots = c("H:/My Drive", "G:/Mi unidad", "C:/Users/andre/Google Drive")) {
+  rel <- gsub("\\\\", "/", rel)
+  for (r in roots) { p <- file.path(r, rel); if (file.exists(p)) return(p) }
+  stop("No se encontro el archivo en ninguna raiz conocida:\n  ",
+       paste(file.path(roots, rel), collapse = "\n  "))
+}
+
+raw_path <- resolve_drive_path(
+  "DOCUMENTOS/6.TESIS 2018/LCA NAQ/BD_2020_input3_match_not_miss.rds")
+message("Datos cargados desde: ", raw_path)
+raw <- readRDS(raw_path) |> janitor::clean_names()
+
+## ---- variable mapping (identical to Part 1) --------------------------------
+items <- paste0("lid_des", c(1:2, 4:14))
+
+as_num <- function(x) {
+  if (is.factor(x)) return(suppressWarnings(as.numeric(as.character(x))))
+  as.numeric(haven::zap_labels(x))
+}
+to01 <- function(x, yes) {
+  f <- as.character(haven::as_factor(x))
+  f[f %in% c("NA", "Not Apply", "NaN", "")] <- NA
+  out <- as.integer(f %in% yes)
+  out[is.na(f)] <- NA_integer_
+  out
+}
+
+## Leadership items: recode to 1-4 factors
+d <- raw
+item_min <- suppressWarnings(min(vapply(items,
+              function(it) min(as.numeric(d[[it]]), na.rm = TRUE), numeric(1))))
+shift <- if (is.finite(item_min) && item_min == 0) 1L else 0L
+for (it in items) d[[it]] <- factor(as.numeric(d[[it]]) + shift, levels = 1:4)
+if (shift == 1L) message("Items recodificados de 0-3 a 1-4 (+1).")
+
+## Continuous covariates — same as Part 1's cont_vars
+d$job_sat       <- as_num(d[["satis"]])           # job satisfaction sum score (0-20)
+
+## Binary covariates (1 = exposed) — same yes_levels as Part 1
+d$sex_woman     <- to01(d[["a52"]],              "Women")
+d$eri           <- to01(d[["desbalance_dic"]],   "Yes")
+d$naq_frequent  <- to01(d[["naq_a"]],            "2")
+d$bully_self    <- to01(d[["autonaq"]],          "Yes")
+d$sex_harass    <- to01(d[["acos_sex"]],         "2")
+d$auditc_hazard <- to01(d[["auditc"]],           "Yes")
+d$no_union      <- to01(d[["org_sind"]],         "Yes")
+d$.w            <- as_num(d[["weight"]])
+
+## Complete-case filter: 13 items + sex_woman (concomitant in measurement model)
+concomitant <- "sex_woman"
+d_lca <- d[stats::complete.cases(d[, c(items, concomitant)]), ]
+cat("Rows total:", nrow(d), " | complete on items +", concomitant, ":", nrow(d_lca), "\n")
+```
+
+## Load Part 1 results (`lca_results.rds`)
+
+```{r}
+#| label: load-part1
+#| results: "hold"
+
+res_path <- resolve_drive_path(
+  "DOCUMENTOS/6.TESIS 2018/LCA NAQ/lca_results.rds")
+res <- readRDS(res_path)
+
+## Check that post4 is present (requires Part 1 rendered with the updated export chunk)
+if (is.null(res$post4))
+  stop("'post4' not found in lca_results.rds. Re-render Part 1 first (the export ",
+       "chunk now saves post4 in addition to modal4).")
+
+post4        <- res$post4          # n x 4 posterior matrix from Part 1's 4-class model
+modal4       <- res$modal4         # n-vector, modal class assignments (1-4)
+class_labels <- res$class_labels   # c("C1 Disengaged/absent","C2 Constructive",...)
+K            <- ncol(post4)
+
+## Alignment guard: d_lca (rebuilt above) must have the same row count as post4
+stopifnot(nrow(post4) == nrow(d_lca))
+cat(sprintf("Loaded: post4 [%d x %d], modal4 [%d], K = %d\n",
+            nrow(post4), ncol(post4), length(modal4), K))
+cat("Class labels:", paste(class_labels, collapse = "; "), "\n")
+```
+
+## Helper functions
+
+`class_matrix`, `ml3step`, `ml3step_ref` are identical to Part 1 / Part 2.
+`ml3step_multi` is a new multivariable extension.
+
+```{r}
+#| label: helpers
+#| results: "hold"
+
+## Classification matrix D[t, w] = P(W = w | X = t), W = modal class.
+class_matrix <- function(post, modal) {
+  K   <- ncol(post)
+  ind <- outer(modal, 1:K, `==`) * 1
+  A   <- t(as.matrix(post)) %*% ind
+  A / rowSums(A)
+}
+
+## ---- Univariate ML three-step (Vermunt 2010) — ONE covariate z -----------
+## Reference class is always class 1 (in the labelling supplied). Returns list
+## with $ors tibble(class, OR, lo, hi) for classes 2..K.
+ml3step <- function(z, post, modal, sw = NULL, D = NULL) {
+  post <- as.matrix(post); K <- ncol(post)
+  if (is.null(sw)) sw <- rep(1, nrow(post))
+  if (is.null(D))  D  <- class_matrix(post, modal)
+  z <- as.numeric(z)
+  ok <- !is.na(z)
+  z <- z[ok]; modal <- modal[ok]; post <- post[ok, , drop = FALSE]; sw <- sw[ok]
+  n <- length(z)
+  Dw <- t(D[, modal])                                # n x K
+  negll <- function(par) {
+    a <- c(0, par[seq(1, 2*(K-1), 2)])
+    b <- c(0, par[seq(2, 2*(K-1), 2)])
+    eta <- outer(rep(1,n), a) + outer(z, b)
+    eta <- eta - apply(eta, 1, max)
+    pis <- exp(eta); pis <- pis / rowSums(pis)
+    pw  <- rowSums(pis * Dw)
+    -sum(sw * log(pmax(pw, 1e-12)))
+  }
+  fit <- optim(rep(0, 2*(K-1)), negll, method = "BFGS", hessian = TRUE)
+  V   <- tryCatch(solve(fit$hessian),
+                  error = function(e) matrix(NA_real_, length(fit$par), length(fit$par)))
+  b_idx <- seq(2, 2*(K-1), 2)
+  b     <- fit$par[b_idx]
+  se    <- sqrt(diag(V))[b_idx]
+  list(par = fit$par, V = V, K = K, ors = tibble::tibble(
+    class = 2:K, OR = exp(b),
+    lo = exp(b - 1.96*se), hi = exp(b + 1.96*se)),
+    conv = fit$convergence)
+}
+
+## ---- ml3step with an ARBITRARY reference class ----------------------------
+## Relabels so `ref` becomes class 1, calls ml3step, maps class indices back.
+ml3step_ref <- function(z, post, modal, sw = NULL, ref = 1L) {
+  post <- as.matrix(post); K <- ncol(post); ref <- as.integer(ref)
+  stopifnot(ref >= 1L, ref <= K)
+  ord    <- c(ref, setdiff(seq_len(K), ref))
+  postR  <- post[, ord, drop = FALSE]
+  modalR <- match(modal, ord)
+  m <- ml3step(z = z, post = postR, modal = modalR, sw = sw)
+  m$ors$class <- ord[m$ors$class]   # map back to original indices
+  m$ref <- ref; m$ord <- ord
+  m
+}
+
+## ---- Multivariable ML three-step (new for Part 3) -------------------------
+## Fits a multinomial logit with ALL p columns of Z simultaneously.
+## Z: n x p numeric matrix (or data frame). ref: reference class (default 1).
+## D is computed from the FULL measurement sample before listwise deletion on Z.
+## Returns $ors tibble(class, covariate, OR, lo, hi), one row per class x covariate.
+ml3step_multi <- function(Z, post, modal, sw = NULL, D = NULL, ref = 1L) {
+  post <- as.matrix(post); K <- ncol(post); ref <- as.integer(ref)
+  stopifnot(ref >= 1L, ref <= K)
+
+  ## Relabel so ref = class 1 (same approach as ml3step_ref)
+  ord    <- c(ref, setdiff(seq_len(K), ref))
+  postR  <- post[, ord, drop = FALSE]
+  modalR <- match(modal, ord)
+
+  if (is.null(sw)) sw <- rep(1, nrow(postR))
+  ## D computed on FULL measurement sample BEFORE any covariate filtering
+  if (is.null(D))  D  <- class_matrix(postR, modalR)
+
+  if (is.data.frame(Z)) Z <- as.matrix(Z)
+  Z  <- apply(Z, 2L, as.numeric)
+  p  <- ncol(Z)
+  nm <- if (!is.null(colnames(Z))) colnames(Z) else paste0("z", seq_len(p))
+
+  ## Listwise deletion on Z only
+  ok      <- complete.cases(Z)
+  Zok     <- Z[ok, , drop = FALSE]
+  modalOk <- modalR[ok]
+  swOk    <- sw[ok]
+  n       <- nrow(Zok)
+
+  ## Dw[i, t] = P(W = w_i | X = t) for each complete-case i
+  Dw <- t(D[, modalOk])   # n x K
+
+  ## Parameter layout: (K-1) blocks of (1 + p).
+  ## Block k (k = 1..K-1, permuted non-reference classes):
+  ##   par[(k-1)*(1+p) + 1]        = intercept alpha_{k+1}
+  ##   par[(k-1)*(1+p) + 1 + j]    = slope beta_{k+1,j}   (j = 1..p)
+  n_par <- (K - 1L) * (1L + p)
+
+  negll <- function(par) {
+    ## Intercepts: positions 1, 1+(1+p), 1+2*(1+p), ...
+    a <- c(0, par[seq(1L, n_par, by = 1L + p)])   # K intercepts (ref = 0)
+    B <- matrix(0, K, p)
+    for (k in seq_len(K - 1L)) {
+      s <- (k - 1L) * (1L + p) + 2L               # first slope index for class k+1
+      B[k + 1L, ] <- par[s:(s + p - 1L)]
+    }
+    eta <- outer(rep(1, n), a) + Zok %*% t(B)     # n x K
+    eta <- eta - apply(eta, 1L, max)
+    pis <- exp(eta); pis <- pis / rowSums(pis)
+    pw  <- rowSums(pis * Dw)
+    -sum(swOk * log(pmax(pw, 1e-12)))
+  }
+
+  fit <- optim(rep(0, n_par), negll, method = "BFGS", hessian = TRUE)
+  V   <- tryCatch(solve(fit$hessian),
+                  error = function(e) matrix(NA_real_, n_par, n_par))
+
+  ## Extract OR per non-reference class (permuted) x covariate
+  ors <- purrr::map_dfr(seq_len(K - 1L), function(k) {
+    orig_class <- ord[k + 1L]
+    s <- (k - 1L) * (1L + p) + 2L
+    purrr::map_dfr(seq_len(p), function(j) {
+      idx <- s + j - 1L
+      b   <- fit$par[idx]
+      se  <- if (!anyNA(V)) sqrt(V[idx, idx]) else NA_real_
+      tibble::tibble(
+        class     = orig_class,
+        covariate = nm[j],
+        OR        = exp(b),
+        lo        = exp(b - 1.96 * se),
+        hi        = exp(b + 1.96 * se)
+      )
+    })
+  })
+
+  list(par = fit$par, V = V, K = K, p = p,
+       ref = ref, ord = ord, covariate_names = nm,
+       ors = ors, conv = fit$convergence,
+       n_complete = n, n_total = nrow(Z))
+}
+```
+
+## Covariate definitions
+
+Seven binary covariates (1 = exposed), matching Part 1's `or_vars`. The reference
+class is **C2 Constructive** (index 2 in the four-class model).
+
+```{r}
+#| label: covariate-setup
+#| results: "hold"
+
+## Reference class: C3 Active constructive — identified by name from class_labels,
+## which are canonically derived from item-response profiles in Part 1.
+## This lookup is robust to glca class re-ordering across re-renders.
+ref_idx <- which(grepl("Active constructive", class_labels))
+stopifnot("'Active constructive' class not found in class_labels" = length(ref_idx) == 1L)
+cat("Reference class (index", ref_idx, "):", class_labels[ref_idx], "\n")
+
+## Non-reference classes and their display labels
+non_ref  <- sort(setdiff(seq_len(K), ref_idx))   # c(1, 3, 4)
+col_labs <- paste0(sub("(C\\d+).*", "\\1", class_labels[non_ref]),
+                   " vs ", sub("(C\\d+).*", "\\1", class_labels[ref_idx]))
+cat("Non-reference classes:", paste(class_labels[non_ref], collapse = "; "), "\n")
+
+## 8 covariates: 7 binary + job satisfaction (continuous, OR per 1-point increase)
+or_vars <- c(
+  "Effort-reward imbalance"         = "eri",
+  "Hazardous alcohol use (AUDIT-C)" = "auditc_hazard",
+  "Absence of union"                = "no_union",
+  "Frequent negative acts (NAQ)"    = "naq_frequent",
+  "Self-labeled bullying"           = "bully_self",
+  "Sexual harassment"               = "sex_harass",
+  "Female sex"                      = "sex_woman",
+  "Job satisfaction (per point)"    = "job_sat"
+)
+
+## Sanity check: all covariate columns exist in d_lca
+miss <- setdiff(as.character(or_vars), names(d_lca))
+if (length(miss)) stop("Missing covariate columns in d_lca: ", paste(miss, collapse=", "))
+cat("All", length(or_vars), "covariate columns confirmed in d_lca.\n")
+```
+
+# Collinearity diagnostics {#collinearity}
+
+Before the OR tables: a correlation matrix and variance inflation factors (VIFs)
+among the 8 covariates. High inter-correlations (especially among ERI, NAQ,
+bullying, and job satisfaction) indicate that the adjusted model is partially
+residualising shared signal rather than removing clean confounding, which can
+destabilise individual coefficients even when the overall fit is good.
+
+```{r}
+#| label: collinearity-diag
+#| results: "hold"
+
+cov_keys_vec <- as.character(or_vars)   # column names, in or_vars order
+
+## Complete-case matrix for the 8 covariates
+Z_diag <- as.matrix(d_lca[, cov_keys_vec])
+Z_diag <- apply(Z_diag, 2, as.numeric)
+colnames(Z_diag) <- names(or_vars)   # display labels as column names
+
+Z_cc <- Z_diag[complete.cases(Z_diag), ]
+cat(sprintf("Collinearity diagnostics on %d complete-case rows.\n", nrow(Z_cc)))
+
+## ---- Pearson correlation matrix ------------------------------------------
+## Phi (binary-binary) and point-biserial (binary-continuous) via Pearson r.
+cor_mat <- round(cor(Z_cc), 3)
+
+cor_mat |>
+  as.data.frame() |>
+  tibble::rownames_to_column("Covariate") |>
+  knitr::kable("markdown",
+    caption = paste0(
+      "Pearson correlation matrix (phi for binary pairs, point-biserial for binary x ",
+      "continuous). Values |r| > 0.40 may inflate VIFs meaningfully; |r| > 0.60 ",
+      "indicate severe multicollinearity in the adjusted model."))
+
+## ---- VIF: regress each predictor on the remaining seven ------------------
+## VIF_j = 1 / (1 - R^2_j) where R^2_j comes from regressing predictor j on all others.
+## Does not depend on the outcome model so applies directly to the ml3step design matrix.
+vif_vec <- vapply(seq_len(ncol(Z_cc)), function(j) {
+  y      <- Z_cc[, j]
+  others <- Z_cc[, -j, drop = FALSE]
+  r2     <- tryCatch(
+    summary(lm(y ~ others))$r.squared,
+    error = function(e) NA_real_)
+  if (is.na(r2) || r2 >= 1) Inf else 1 / (1 - r2)
+}, numeric(1))
+
+vif_tbl <- tibble::tibble(
+  Covariate = names(or_vars),
+  `Column`  = cov_keys_vec,
+  VIF       = round(vif_vec, 2),
+  `Concern` = dplyr::case_when(
+    vif_vec >= 10  ~ "Severe (>= 10)",
+    vif_vec >= 5   ~ "Moderate (5-10)",
+    vif_vec >= 2.5 ~ "Mild (2.5-5)",
+    TRUE           ~ "Low (< 2.5)")
+)
+vif_tbl |>
+  dplyr::select(-Column) |>
+  knitr::kable("markdown",
+    caption = paste0(
+      "Variance inflation factors (VIF) for the 8-covariate adjusted model. ",
+      "Rule of thumb: VIF < 2.5 = low concern, 2.5-5 = mild, 5-10 = moderate, ",
+      ">= 10 = severe. Covariates with high VIF produce unstable adjusted ORs; ",
+      "their individual coefficients absorb the shared variance of correlated predictors."))
+```
+
+::: {.callout-warning}
+## Interpretation caveat — adjusted job satisfaction OR
+
+Job satisfaction is moderately to strongly correlated with ERI, NAQ, and
+self-labeled bullying (all markers of workplace adversity). In the adjusted model
+each OR for job satisfaction is **net of** those three covariates, i.e. it
+represents the residual satisfaction effect among workers with identical ERI,
+NAQ, and bullying exposure. This is a narrow conditioning that may not align
+with the construct as described in the manuscript.
+
+Per the manuscript's house-style rule (*"prefer marginal predicted probabilities
+for interpretation; ORs are supporting quantities"*), **do not quote the
+adjusted job-satisfaction OR in prose** until you have resolved whether (a) VIFs
+are acceptable and (b) the coefficient is stable across plausible subsets of the
+covariate set. The unadjusted job-satisfaction OR (one covariate at a time) is
+the safer interpretable quantity.
+:::
+
+# Unadjusted ORs — one covariate at a time, reference = C3 Active constructive {#unadjusted}
+
+One `ml3step_ref()` call per covariate (univariate, survey-weighted). For each
+covariate the complete-case n may differ; rows missing the covariate are dropped
+from the structural step only (classification matrix D uses the full measurement
+sample). Job satisfaction enters as a continuous predictor; the OR represents the
+change in odds per **1-point increase** in the sum score (range 0–20).
+
+```{r}
+#| label: unadjusted-fits
+#| results: "hold"
+#| cache: false
+
+unadj_fits <- lapply(or_vars, function(key) {
+  ml3step_ref(z   = d_lca[[key]],
+              post = post4, modal = modal4,
+              sw   = d_lca$.w, ref = ref_idx)
+})
+
+## Check convergence
+conv_u <- vapply(unadj_fits, function(m) m$conv, integer(1))
+if (any(conv_u != 0))
+  message("Unadjusted: non-zero convergence for: ",
+          paste(names(or_vars)[conv_u != 0], collapse = ", "))
+
+## Per-covariate complete n
+n_u <- vapply(or_vars, function(key) sum(!is.na(d_lca[[key]])), integer(1))
+cat("Unadjusted n by covariate:\n")
+print(data.frame(covariate = names(or_vars), n = n_u))
+```
+
+```{r}
+#| label: table-unadjusted
+#| results: "hold"
+
+fmt <- function(OR, lo, hi) sprintf("%.2f (%.2f-%.2f)", OR, lo, hi)
+
+get_unadj <- function(m, cls) {
+  r <- m$ors[m$ors$class == cls, ]
+  if (nrow(r) == 0) return("—")
+  fmt(r$OR, r$lo, r$hi)
+}
+
+tbl_u <- purrr::imap_dfr(or_vars, function(key, lab) {
+  m <- unadj_fits[[lab]]
+  tibble::tibble(
+    Covariate  = lab,
+    n          = n_u[[lab]],
+    `C1 vs C3` = get_unadj(m, 1L),
+    `C2 vs C3` = get_unadj(m, 2L),
+    `C4 vs C3` = get_unadj(m, 4L)
+  )
+})
+
+tbl_u |>
+  dplyr::rename(
+    `C1 Constructive vs C3` = `C1 vs C3`,
+    `C2 Passive/absent vs C3` = `C2 vs C3`,
+    `C4 Ambivalent vs C3` = `C4 vs C3`
+  ) |>
+  knitr::kable("markdown",
+    caption = paste0(
+      "Table U. Unadjusted ML three-step odds ratios (95% CI), reference = C3 Active constructive. ",
+      "One covariate at a time; survey-weighted. Binary covariates: OR = odds ratio for ",
+      "exposed vs unexposed. Job satisfaction: OR per 1-point increase in the sum score (0-20). ",
+      "Classification matrix D fixed from the four-class measurement model ",
+      "(Part 1, seed 2125, n.init = ", res$n_init, ")."))
+```
+
+*Note.* OR > 1 for a profile Cx vs C3 means that workers in Cx have **higher**
+odds of being exposed to that covariate than workers in C3 (Active constructive). OR < 1
+means lower odds. Reference profile = C3 Active constructive (the empirically healthiest
+leadership pattern).
+
+# Adjusted ORs — all 7 covariates simultaneously, reference = C3 Active constructive {#adjusted}
+
+A single `ml3step_multi()` call with all 8 covariates in the multinomial logit
+simultaneously (7 binary + job satisfaction continuous). Each OR is conditional on
+the remaining seven. Survey weights applied. Complete-case analysis: rows missing
+**any** of the 8 covariates are excluded from the structural step. The job
+satisfaction OR is per **1-point increase** in the sum score (0–20).
+
+```{r}
+#| label: adjusted-fit
+#| results: "hold"
+#| cache: false
+
+## Build the 7-column design matrix (n x 7), preserving column names for output
+Z_all <- as.matrix(d_lca[, as.character(or_vars)])
+colnames(Z_all) <- as.character(or_vars)   # internal names (e.g. "eri")
+
+n_adj <- sum(complete.cases(Z_all))
+n_drop <- nrow(d_lca) - n_adj
+cat(sprintf("Adjusted analysis: n = %d complete on all 7 covariates (%d dropped, %.1f%%).\n",
+            n_adj, n_drop, 100 * n_drop / nrow(d_lca)))
+
+adj_fit <- ml3step_multi(
+  Z     = Z_all,
+  post  = post4,
+  modal = modal4,
+  sw    = d_lca$.w,
+  ref   = ref_idx
+)
+
+cat(sprintf("Convergence code: %d (0 = success)\n", adj_fit$conv))
+if (adj_fit$conv != 0)
+  warning("Adjusted model did not converge cleanly (code ", adj_fit$conv,
+          "). Results should be interpreted with caution.")
+```
+
+```{r}
+#| label: table-adjusted
+#| results: "hold"
+
+get_adj <- function(cls, cov_key) {
+  r <- adj_fit$ors[adj_fit$ors$class == cls &
+                   adj_fit$ors$covariate == cov_key, ]
+  if (nrow(r) == 0) return("—")
+  fmt(r$OR, r$lo, r$hi)
+}
+
+tbl_a <- purrr::imap_dfr(or_vars, function(key, lab) {
+  tibble::tibble(
+    Covariate  = lab,
+    `C1 vs C3` = get_adj(1L, key),
+    `C2 vs C3` = get_adj(2L, key),
+    `C4 vs C3` = get_adj(4L, key)
+  )
+})
+
+tbl_a |>
+  dplyr::rename(
+    `C1 Constructive vs C3` = `C1 vs C3`,
+    `C2 Passive/absent vs C3` = `C2 vs C3`,
+    `C4 Ambivalent vs C3` = `C4 vs C3`
+  ) |>
+  knitr::kable("markdown",
+    caption = sprintf(paste0(
+      "Table A. Adjusted ML three-step odds ratios (95%% CI), reference = C3 Active constructive. ",
+      "All 8 covariates included simultaneously (7 binary + job satisfaction continuous); ",
+      "each OR is adjusted for the remaining seven. Job satisfaction OR = per 1-point increase. ",
+      "Survey-weighted. Complete-case n = %d (of %d; %d rows dropped missing any covariate). ",
+      "Classification matrix D fixed from the four-class measurement model (Part 1)."),
+      adj_fit$n_complete, nrow(d_lca), nrow(d_lca) - adj_fit$n_complete))
+```
+
+# Comparison: unadjusted vs adjusted {#comparison}
+
+Side-by-side display. For each covariate × profile, the unadjusted OR is followed
+by the adjusted OR (in parentheses) in the same cell, so the effect of mutual
+adjustment is immediately visible. Substantial changes from unadjusted to adjusted
+indicate confounding among the covariates.
+
+```{r}
+#| label: table-comparison
+#| results: "hold"
+
+combine_or <- function(u_str, a_str) {
+  if (u_str == "—" && a_str == "—") return("—")
+  paste0(u_str, "\n(adj: ", a_str, ")")
+}
+
+tbl_c <- purrr::imap_dfr(or_vars, function(key, lab) {
+  m <- unadj_fits[[lab]]
+  tibble::tibble(
+    Covariate  = lab,
+    `C1 Constructive vs C3` = combine_or(get_unadj(m, 1L), get_adj(1L, key)),
+    `C2 Passive/absent vs C3` = combine_or(get_unadj(m, 2L), get_adj(2L, key)),
+    `C4 Ambivalent vs C3` = combine_or(get_unadj(m, 4L), get_adj(4L, key))
+  )
+})
+
+tbl_c |>
+  knitr::kable("markdown",
+    caption = paste0(
+      "Table C. Unadjusted vs adjusted ML three-step ORs (95% CI), reference = C3 Active constructive. ",
+      "Each cell: unadjusted OR (top) and adjusted OR in parentheses. ",
+      "The adjusted model includes all 7 covariates simultaneously. ",
+      "Large unadjusted-to-adjusted shifts indicate mutual confounding."))
+```
+
+# Export
+
+```{r}
+#| label: export
+#| results: "hold"
+
+ref_tag <- paste0("refC", ref_idx)
+readr::write_csv(tbl_u, paste0("tableU_unadjusted_or_", ref_tag, ".csv"))
+readr::write_csv(tbl_a, paste0("tableA_adjusted_or_",   ref_tag, ".csv"))
+
+## Raw numeric values for re-formatting
+unadj_raw <- purrr::imap_dfr(or_vars, function(key, lab) {
+  m <- unadj_fits[[lab]]
+  purrr::map_dfr(non_ref, function(cls) {
+    r <- m$ors[m$ors$class == cls, ]
+    tibble::tibble(Covariate = lab, covariate_key = key,
+                   comparison = paste0("C", cls, " vs C3"),
+                   class = cls,
+                   OR = if (nrow(r)) r$OR else NA_real_,
+                   lo = if (nrow(r)) r$lo else NA_real_,
+                   hi = if (nrow(r)) r$hi else NA_real_,
+                   type = "unadjusted",
+                   n = n_u[[lab]])
+  })
+})
+
+adj_raw <- purrr::imap_dfr(or_vars, function(key, lab) {
+  purrr::map_dfr(non_ref, function(cls) {
+    r <- adj_fit$ors[adj_fit$ors$class == cls & adj_fit$ors$covariate == key, ]
+    tibble::tibble(Covariate = lab, covariate_key = key,
+                   comparison = paste0("C", cls, " vs C3"),
+                   class = cls,
+                   OR = if (nrow(r)) r$OR else NA_real_,
+                   lo = if (nrow(r)) r$lo else NA_real_,
+                   hi = if (nrow(r)) r$hi else NA_real_,
+                   type = "adjusted",
+                   n = adj_fit$n_complete)
+  })
+})
+
+or_values <- dplyr::bind_rows(unadj_raw, adj_raw) |>
+  dplyr::arrange(covariate_key, class, type)
+readr::write_csv(or_values, paste0("tableUA_or_values_", ref_tag, ".csv"))
+
+cat(sprintf(
+  "Wrote:\n  tableU_unadjusted_or_%s.csv (%d rows)\n  tableA_adjusted_or_%s.csv (%d rows)\n  tableUA_or_values_%s.csv (%d rows; both models, numeric)\n",
+  ref_tag, nrow(tbl_u), ref_tag, nrow(tbl_a), ref_tag, nrow(or_values)))
+```
+
+# Session information
+
+```{r}
+#| label: session-info
+sessionInfo()
+```
