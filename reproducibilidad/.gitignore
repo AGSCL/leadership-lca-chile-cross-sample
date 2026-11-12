@@ -1,4 +1,4 @@
-# Public repository: deny by default, allow only reviewed source files.
+# Public repository: deny by default, allow only reviewed publication files.
 # New files need an explicit entry after a privacy review. Never use git add -f
 # for participant data, model objects, generated reports or editorial notes.
 *
@@ -22,6 +22,10 @@
 !/R/export_leadership_results.R
 !/R/leadership_table2.R
 !/R/load_leadership_results.R
+# Reviewed aggregate report linked from the public index.
+!/informes/
+/informes/*
+!/informes/06_multiplicidad_solapamiento.html
 
 /.quarto/
 **/*.quarto_ipynb

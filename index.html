@@ -8,7 +8,7 @@
 
 <meta name="author" content="Andrés González-Santa Cruz">
 <meta name="author" content="Elisa Ansoleaga">
-<meta name="dcterms.date" content="2026-10-17">
+<meta name="dcterms.date" content="2026-11-12">
 <meta name="description" content="FONDECYT Regular 1170239">
 
 <title>Leadership profiles and occupational health in Chile</title>
@@ -2336,7 +2336,7 @@ body { font-size: 16px; }
     <div>
     <div class="quarto-title-meta-heading">Published</div>
     <div class="quarto-title-meta-contents">
-      <p class="date">October 17, 2026</p>
+      <p class="date">November 12, 2026</p>
     </div>
   </div>
   
@@ -2368,7 +2368,7 @@ body { font-size: 16px; }
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<p>The main report and its aggregate exports were refreshed on September 7, 2026, using the saved measurement estimates. The multiple-group and Part 2 sources received export-only updates, but their linked HTML files remain snapshots of earlier runs; their new exports will be written at their next render. The other linked reports are also saved snapshots. Their tables and output were reviewed for participant-level records before inclusion in the public-file allowlist. Check each report’s execution settings, class labels, diagnostics, and session information together with the relevant export manifest. This page itself runs no statistical analysis.</p>
+<p>The main report and its aggregate exports were refreshed on September 7, 2026, using the saved measurement estimates. The multiple-group and Part 2 sources received export-only updates, but their linked HTML files remain snapshots of earlier runs; their new exports will be written at their next render. The other linked reports are also saved snapshots. Their tables and output were reviewed for participant-level records before inclusion in the public-file allowlist. Check each report’s execution settings, class labels, diagnostics, and session information together with the relevant export manifest. The new stage-06 audit was rendered on November 12, 2026. It uses the current shared-measurement bootstrap and documents feasible overlap restrictions; it does not refit models under those restrictions. This page itself runs no statistical analysis.</p>
 </div>
 </div>
 </section>
@@ -2420,6 +2420,13 @@ body { font-size: 16px; }
 <p><a href="Figures_IAOEH_consolidated.html">Read the consolidated figure report</a> · <a href="Figures_IAOEH_consolidated.qmd">Inspect the source</a></p>
 <p>This notebook prepares the four manuscript figures from saved results: enumeration, general-sample item-response probabilities, shared invariant profiles, and setting-specific prevalence. Figure 1 also uses adjacent-solution agreement where the required enumeration assignments are available. Its checks connect those assignments to the fitted enumeration results.</p>
 <p><strong>Reading key:</strong> the consolidated Figure 3 depicts shared profiles from the invariant model. It is different from the separately fitted profile comparison shown in the multiple-group report. Match the figure to the model named in its caption.</p>
+</section>
+<section id="audit-multiplicity-and-possible-sample-overlap" class="level3">
+<h3 class="anchored" data-anchor-id="audit-multiplicity-and-possible-sample-overlap">8. Audit multiplicity and possible sample overlap</h3>
+<p><a href="reproducibilidad/informes/06_multiplicidad_solapamiento.html">Read the multiplicity and overlap audit</a> · <a href="reproducibilidad/06_multiplicidad_solapamiento.qmd">Inspect stage 06</a> · <a href="reproducibilidad/README.md">Reproduction instructions</a></p>
+<p>The audit reproduces the 24 between-sample ROR contrasts and their Benjamini-Hochberg adjustment from the saved shared-measurement bootstrap. It adds eight exploratory joint tests, descriptive differences in marginal probabilities, and geographic and healthcare-sector counts for possible sample restrictions.</p>
+<p><strong>Reading key:</strong> failure to reject after multiplicity correction does not establish equivalent associations. Geographic overlap and healthcare-sector eligibility identify possible sources of shared participants, not duplicated individuals. Restricted-sample model refits remain pending; the report quantifies the sample sizes those sensitivity analyses would retain.</p>
+<p>The source and this reviewed aggregate HTML report are public. Participant data, fitted models, bootstrap draws, and the other stage-06 outputs remain private. Reproducing the audit requires the compatible stage-02, stage-03, and stage-05 checkpoints and the authorized input files described in its instructions.</p>
 </section>
 </section>
 <section id="understand-the-quantities-before-comparing-them" class="level2">

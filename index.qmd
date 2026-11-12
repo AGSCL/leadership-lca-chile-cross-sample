@@ -64,6 +64,9 @@ linked reports are also saved snapshots. Their tables
 and output were reviewed for participant-level records before inclusion in the
 public-file allowlist. Check each report's execution settings, class labels,
 diagnostics, and session information together with the relevant export manifest.
+The new stage-06 audit was rendered on November 12, 2026. It uses the current
+shared-measurement bootstrap and documents feasible overlap restrictions;
+it does not refit models under those restrictions.
 This page itself runs no statistical analysis.
 :::
 
@@ -199,6 +202,29 @@ connect those assignments to the fitted enumeration results.
 invariant model. It is different from the separately fitted profile comparison
 shown in the multiple-group report. Match the figure to the model named in its
 caption.
+
+### 8. Audit multiplicity and possible sample overlap
+
+[Read the multiplicity and overlap audit](reproducibilidad/informes/06_multiplicidad_solapamiento.html) ·
+[Inspect stage 06](reproducibilidad/06_multiplicidad_solapamiento.qmd) ·
+[Reproduction instructions](reproducibilidad/README.md)
+
+The audit reproduces the 24 between-sample ROR contrasts and their
+Benjamini-Hochberg adjustment from the saved shared-measurement bootstrap.
+It adds eight exploratory joint tests, descriptive differences in marginal
+probabilities, and geographic and healthcare-sector counts for possible
+sample restrictions.
+
+**Reading key:** failure to reject after multiplicity correction does not
+establish equivalent associations. Geographic overlap and healthcare-sector
+eligibility identify possible sources of shared participants, not duplicated
+individuals. Restricted-sample model refits remain pending; the report quantifies
+the sample sizes those sensitivity analyses would retain.
+
+The source and this reviewed aggregate HTML report are public. Participant data,
+fitted models, bootstrap draws, and the other stage-06 outputs remain private.
+Reproducing the audit requires the compatible stage-02, stage-03, and stage-05
+checkpoints and the authorized input files described in its instructions.
 
 ## Understand the quantities before comparing them
 

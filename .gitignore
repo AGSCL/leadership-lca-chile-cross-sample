@@ -110,3 +110,7 @@
 !/reproducibilidad/R/export_leadership_results.R
 !/reproducibilidad/R/leadership_table2.R
 !/reproducibilidad/R/load_leadership_results.R
+# Reviewed aggregate stage-06 HTML; all other reports remain excluded.
+!/reproducibilidad/informes/
+/reproducibilidad/informes/*
+!/reproducibilidad/informes/06_multiplicidad_solapamiento.html

@@ -3,9 +3,10 @@
 **Referencia actual: `../IAOEH/manuscriptv20.docx`.** Esta carpeta ordena su reproducción y las observaciones de Elisa Ansoleaga. No modifica el manuscrito. Las decisiones posteriores a las notas históricas de esta guía se documentan en `../HANDOFF_destructive_leadership_LCA.md`.
 
 **Distribución pública:** Git incluye únicamente las seis fuentes QMD, seis helpers R,
-el verificador, la configuración, este README y los CSV de mapa/procedencia.
+el verificador, la configuración, este README, los CSV de mapa/procedencia y
+el informe HTML agregado de la etapa 06, revisado para publicación.
 Los enlaces de esta guía a notas editoriales, verificaciones históricas, manuscrito,
-informes y resultados corresponden al espacio de trabajo privado y no estarán
+otros informes y resultados corresponden al espacio de trabajo privado y no estarán
 disponibles en un clon público. No son dependencias ejecutables del código.
 
 ## Publicar el código en GitHub
@@ -176,7 +177,8 @@ privadas en `salidas/` son `06_ror.csv`, `06_omnibus.csv`,
 `06_probabilidades.csv`, `06_geografia.csv`, `06_salud.csv`,
 `06_restricciones.csv`, `06_procedencia.csv`, `06_ror.png` y
 `06_auditoria.rds`. El RDS contiene resultados agregados, no filas individuales.
-La lista pública sólo admite la nueva fuente QMD; estos resultados siguen excluidos.
+La lista pública admite la fuente QMD y el HTML agregado 06 enlazado desde el
+índice principal. Los archivos de salidas siguen excluidos.
 
 Los contrastes globales son exploratorios y las restricciones calculan cuántos casos
 quedarían. No constituyen una sensibilidad con modelos reajustados, no identifican

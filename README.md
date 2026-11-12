@@ -5,8 +5,10 @@
 con checkpoints explícitos. La nueva
 [etapa 06](reproducibilidad/06_multiplicidad_solapamiento.qmd) audita la
 multiplicidad y el posible solapamiento de muestras; las restricciones todavía
-no se han reestimado. Se publica el código, conservando privados los datos,
-modelos y salidas de esta ruta. Los archivos históricos se conservan.
+no se han reestimado. Se publican el código y el
+[informe agregado 06](reproducibilidad/informes/06_multiplicidad_solapamiento.html),
+conservando privados los datos, modelos y demás salidas de esta ruta.
+Los archivos históricos se conservan.
 
 Analysis sources and results for the study of constructive, destructive, and
 *laissez-faire* leadership among Chilean salaried workers and hospital workers.
@@ -33,6 +35,7 @@ quarto render index.qmd
 | 5. Sensitivity | What changes with five or eight classes? | [Enumeration uncertainty](leadership_LCA_8class_sensitivity.qmd) | [HTML](leadership_LCA_8class_sensitivity.html) |
 | 6. Sensitivity | What changes when job satisfaction leaves the adjustment set? | [Seven-covariate comparison](leadership_LCA_part2_adjusted_nojobsat.qmd) | [HTML](leadership_LCA_part2_adjusted_nojobsat.html) |
 | 7. Figures | Which saved results generate manuscript Figures 1–4? | [Consolidated figures](Figures_IAOEH_consolidated.qmd) | [HTML](Figures_IAOEH_consolidated.html) |
+| 8. Audit | How should multiplicity and possible sample overlap be assessed? | [Stage 06](reproducibilidad/06_multiplicidad_solapamiento.qmd) | [HTML](reproducibilidad/informes/06_multiplicidad_solapamiento.html) |
 
 Part 2 includes both one-covariate-at-a-time and mutually adjusted models. Part 3
 uses the general-sample model. Their job-satisfaction coefficients have different
