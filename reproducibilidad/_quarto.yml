@@ -1,0 +1,20 @@
+project:
+  type: default
+  output-dir: informes
+  execute-dir: project
+  render:
+    - 01_general.qmd
+    - 02_hospital.qmd
+    - 03_asociaciones.qmd
+    - 04_sensibilidad_figuras.qmd
+    - 05_bootstrap.qmd
+    - 06_multiplicidad_solapamiento.qmd
+execute:
+  error: false
+  cache: false
+  freeze: false
+format:
+  html:
+    toc: true
+    code-fold: true
+    embed-resources: true

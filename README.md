@@ -1,9 +1,12 @@
 # Leadership profiles and occupational health in Chile
 
-**Revisión de Ansoleaga, 29 septiembre 2026:** empieza en
-[reproducibilidad/README.md](reproducibilidad/README.md). Contiene la revisión
-metodológica, el mapa del manuscrito `IAOEH/manuscript.docx` y una ruta de cuatro
-QMD con checkpoints explícitos. Los archivos históricos se conservan.
+**Actualización, 12 noviembre 2026:** empieza en
+[reproducibilidad/README.md](reproducibilidad/README.md). Incluye seis etapas QMD
+con checkpoints explícitos. La nueva
+[etapa 06](reproducibilidad/06_multiplicidad_solapamiento.qmd) audita la
+multiplicidad y el posible solapamiento de muestras; las restricciones todavía
+no se han reestimado. Se publica el código, conservando privados los datos,
+modelos y salidas de esta ruta. Los archivos históricos se conservan.
 
 Analysis sources and results for the study of constructive, destructive, and
 *laissez-faire* leadership among Chilean salaried workers and hospital workers.

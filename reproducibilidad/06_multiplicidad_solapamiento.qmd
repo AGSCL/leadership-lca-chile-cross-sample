@@ -1,0 +1,649 @@
+---
+title: "06. Multiplicidad y posible solapamiento entre muestras"
+subtitle: "Auditoría reproducible de inferencia y restricciones factibles"
+lang: es
+date: today
+format:
+  html:
+    toc: true
+    code-fold: true
+    embed-resources: true
+    include-in-header:
+      text: |
+        <style>
+        table.table { border-top: 1.5pt solid; border-bottom: 1.5pt solid; }
+        table.table thead { border-bottom: 0.75pt solid; }
+        table.table > :not(caption) > * > * { border: 0; box-shadow: none; background: transparent; }
+        table.table td { overflow-wrap: anywhere; }
+        </style>
+execute:
+  error: false
+  cache: false
+  freeze: false
+---
+
+## Preguntas y alcance
+
+Este informe evalúa cuánto cambia la lectura de las diferencias entre muestras
+al considerar la multiplicidad y qué información permite delimitar un posible
+solapamiento de participantes. La comparación hospitalaria sigue siendo un eje
+principal; esta auditoría se centra en las asociaciones secundarias y en un
+supuesto de independencia que también afecta la comparación entre muestras.
+
+Se recalculan los contrastes desde el bootstrap guardado y se cuentan las personas
+que conservarían distintas restricciones. **No se reestiman modelos con
+exclusiones ni se identifican participantes comunes a ambas encuestas.**
+Los contrastes conjuntos y las diferencias entre diferencias de probabilidades
+son análisis exploratorios posteriores a la revisión de la v20.
+
+Se requieren las etapas 02, 03 y 05 terminadas y las tres bases privadas descritas
+al final. Se escriben exclusivamente resultados con prefijo `06_`; el manuscrito
+y las salidas anteriores se conservan.
+
+```{r}
+#| label: audit06-directory
+#| include: false
+dir.create("salidas", showWarnings = FALSE)
+knitr::opts_knit$set(root.dir = normalizePath("salidas", winslash = "/", mustWork = TRUE))
+```
+
+```{r}
+#| label: audit06-inputs
+#| include: false
+required <- c("knitr", "haven", "janitor", "digest")
+stopifnot(all(vapply(required, requireNamespace, logical(1), quietly = TRUE)))
+if (.Platform$OS.type == "windows")
+  Sys.setlocale("LC_CTYPE", "English_United States.utf8")
+read_one <- function(path, name) {
+  checkpoint <- new.env(parent = emptyenv())
+  stopifnot(identical(load(path, envir = checkpoint), name))
+  checkpoint[[name]]
+}
+asociaciones <- read_one("03_asociaciones.RData", "asociaciones")
+b <- read_one("05_bootstrap.RData", "bootstrap")
+stopifnot(identical(b$status, "complete"), b$failed == 0L,
+  b$configuration$n_init == 4000L, identical(b$configuration$warm_start, FALSE),
+  b$valid == b$requested, b$valid == ncol(b$draws),
+  identical(b$association_hash, unname(tools::md5sum("03_asociaciones.RData"))),
+  identical(asociaciones$measurement$hash, unname(tools::md5sum("02_hospital.RData"))))
+for (path in names(b$source_hash))
+  stopifnot(identical(unname(b$source_hash[path]), digest::digest(file = path, algo = "sha256")))
+s <- b$summary
+key <- asociaciones$measurement$class_key
+matched <- match(s$raw_class, key$raw_class)
+stopifnot(!anyNA(matched), identical(s$class, key$manuscript_class[matched]),
+  identical(s$profile, key$manuscript_label[matched]),
+  all(s$reference_class == key$manuscript_class[
+    match(asociaciones$measurement$reference_raw, key$raw_class)]))
+# Summary classes were renamed after draws were built; verify original keys.
+point_keys <- setdiff(names(b$point$estimates), "value")
+summary_keys <- s[, point_keys, drop = FALSE]
+summary_keys$class <- s$raw_class
+stopifnot(identical(summary_keys, b$point$estimates[, point_keys, drop = FALSE]),
+  identical(s$value, b$point$estimates$value), nrow(s) == nrow(b$draws))
+valid_replicates <- b$replicates[vapply(b$replicates, function(x) x$status == "ok", logical(1))]
+replicate_ids <- vapply(valid_replicates, function(x) x$replicate, integer(1))
+stopifnot(length(valid_replicates) == b$valid, !anyDuplicated(replicate_ids))
+for (i in seq_along(valid_replicates))
+  stopifnot(identical(valid_replicates[[i]]$estimates[, point_keys, drop = FALSE],
+                     b$point$estimates[, point_keys, drop = FALSE]),
+    identical(unname(b$draws[, i]), valid_replicates[[i]]$estimates$value))
+covariate_labels <- c(eri = "Desbalance esfuerzo-recompensa",
+  auditc_hazard = "Consumo de alcohol de riesgo", no_union = "Ausencia de sindicato",
+  naq_frequent = "Actos negativos frecuentes", bully_self = "Bullying autoinformado",
+  sex_harass = "Acoso sexual", sex_woman = "Mujer",
+  psychotrop_flexible = "Uso regular de psicotr\u00f3picos")
+main_keys <- asociaciones$specifications$main
+stopifnot(length(main_keys) == 8L, setequal(main_keys, names(covariate_labels)))
+fmt <- function(x, digits = 3L) formatC(x, digits = digits, format = "f", decimal.mark = ",")
+```
+
+## Qué se compara
+
+Los modelos actuales son multivariables: incluyen las ocho covariables
+simultáneamente. Comparten la medición invariante estimada con *glca*;
+el tercer paso usa pesos postestratificados en la muestra general y peso 1
+en la hospitalaria. ROR= OR hospitalaria / OR general.
+La referencia se obtiene del objeto validado.
+
+```{r}
+#| label: audit06-class-key
+knitr::kable(key[, c("raw_class", "manuscript_class", "manuscript_label")],
+  col.names = c("Clase raw", "Clase del manuscrito", "Perfil"),
+  caption = "Correspondencia de clases del modelo compartido actual.")
+```
+
+Cada réplica remuestrea participantes dentro de cada muestra, reestima la
+medición compartida y ambos modelos. La diferencia de coeficientes de la
+**misma réplica** incorpora la covarianza inducida por esa medición.
+No incorpora dependencia adicional por personas anónimas presentes en ambas bases.
+
+## Multiplicidad y precisión
+
+Se reproducen los P-values Wald con la desviación estándar bootstrap del log ROR,
+los intervalos percentiles y BH sobre los 24 contrastes. BKY se muestra como
+complemento ya calculado por 05; no se elige la corrección según su resultado.
+
+```{r}
+#| label: audit06-ror-calculation
+j <- which(s$specification == "main" & s$estimand == "log_ROR")
+ror <- s[j, c("covariate", "class", "profile", "reference_class", "estimate",
+             "lower", "upper", "bootstrap_se", "p_wald_bootstrap", "q_bh", "q_bky")]
+stopifnot(nrow(ror) == 24L, all(table(ror$covariate) == 3L),
+  !anyDuplicated(ror[, c("covariate", "class")]),
+  all(s$sample[j] == "hospital/general"), all(is.finite(b$draws[j, ])))
+se <- apply(b$draws[j, , drop = FALSE], 1L, sd)
+p <- 2 * pnorm(-abs(s$value[j] / se))
+ci <- t(apply(b$draws[j, , drop = FALSE], 1L, quantile, probs = c(.025, .975)))
+stopifnot(all(se > 0),
+  isTRUE(all.equal(se, ror$bootstrap_se, check.attributes = FALSE)),
+  isTRUE(all.equal(p, ror$p_wald_bootstrap, check.attributes = FALSE)),
+  isTRUE(all.equal(exp(s$value[j]), ror$estimate, check.attributes = FALSE)),
+  isTRUE(all.equal(exp(ci[, 1]), ror$lower, check.attributes = FALSE)),
+  isTRUE(all.equal(exp(ci[, 2]), ror$upper, check.attributes = FALSE)),
+  isTRUE(all.equal(p.adjust(p, "BH"), ror$q_bh, check.attributes = FALSE)))
+canonical <- read.csv("bootstrap_associations.csv", stringsAsFactors = FALSE)
+canonical <- subset(canonical, specification == "main" & estimand == "log_ROR")
+index <- match(paste(ror$covariate, ror$class), paste(canonical$covariate, canonical$class))
+stopifnot(!anyNA(index), nrow(canonical) == nrow(ror),
+  isTRUE(all.equal(ror, canonical[index, names(ror)], check.attributes = FALSE)))
+ror <- ror[order(ror$covariate, ror$class), ]
+row.names(ror) <- NULL
+smallest <- ror[which.min(ror$p_wald_bootstrap), ]
+```
+
+De los `r nrow(ror)` contrastes, `r sum(ror$p_wald_bootstrap < .05)` tienen
+P< 0,05 antes de corregir y `r sum(ror$q_bh < .05)` tienen q BH< 0,05.
+El menor P corresponde a **`r unname(covariate_labels[smallest$covariate])`,
+C`r smallest$class` frente a C`r smallest$reference_class`**:
+ROR= `r fmt(smallest$estimate, 2)`,
+IC95% `r fmt(smallest$lower, 2)` a `r fmt(smallest$upper, 2)`,
+P= `r fmt(smallest$p_wald_bootstrap)`, q BH= `r fmt(smallest$q_bh)`.
+El segundo P más pequeño es `r fmt(sort(ror$p_wald_bootstrap)[2])`.
+
+```{r}
+#| label: audit06-ror-table
+knitr::kable(data.frame(
+  Covariable = unname(covariate_labels[ror$covariate]),
+  Contraste = paste0("C", ror$class, " / C", ror$reference_class),
+  ROR = fmt(ror$estimate, 2),
+  "IC95% puntual" = paste(fmt(ror$lower, 2), fmt(ror$upper, 2), sep = " a "),
+  "P-value nominal" = fmt(ror$p_wald_bootstrap),
+  "q BH" = fmt(ror$q_bh), "q BKY" = fmt(ror$q_bky), check.names = FALSE),
+  caption = "Familia principal de 24 ROR. Intervalos puntuales, no simultáneos.")
+```
+
+BH controla la tasa esperada de falsos descubrimientos bajo sus supuestos;
+no es Bonferroni y no amplía los intervalos puntuales mostrados. Puede reducir
+sensibilidad, pero la magnitud del error tipo II no se identifica con estos
+resultados. No se calcula potencia retrospectiva suponiendo que el efecto
+observado es el verdadero.
+
+Un q alto no prueba homogeneidad ni equivalencia. Deben considerarse magnitud
+e intervalos además del umbral. Tampoco corresponde reducir la familia a
+posteriori a las comparaciones con menor P-value. No se demuestran aquí las
+condiciones de dependencia necesarias para el control formal de FDR de BH.
+El q de un contraste no es su probabilidad individual de ser falso.
+
+## Contrastes conjuntos por covariable
+
+Se contrasta que los tres log ROR sean cero conjuntamente.
+Sea \(d\) el vector de diferencias hospital menos general y
+\(\widehat V=\operatorname{Cov}_{bootstrap}(d^*)\).
+Se calcula \(W=d^\mathsf{T}\widehat V^{-1}d\) y se compara con
+\(\chi^2_3\). La covarianza incluye las correlaciones entre clases.
+Se comprueba que la matriz sea definida positiva antes de invertirla.
+
+```{r}
+#| label: audit06-omnibus
+omnibus <- do.call(rbind, lapply(main_keys, function(covariate) {
+  rows <- which(s$specification == "main" & s$estimand == "log_ROR" &
+                  s$covariate == covariate)
+  stopifnot(length(rows) == 3L)
+  V <- cov(t(b$draws[rows, , drop = FALSE]))
+  eigenvalues <- eigen(V, symmetric = TRUE, only.values = TRUE)$values
+  stopifnot(all(is.finite(V)), min(eigenvalues) > max(eigenvalues) * 1e-10)
+  d <- s$value[rows]
+  W <- drop(crossprod(d, solve(V, d)))
+  # Check invariance to an invertible contrast change, with estimates fixed.
+  A <- rbind(c(-1, 0, 0), c(-1, 1, 0), c(-1, 0, 1))
+  shifted <- drop(crossprod(A %*% d, solve(A %*% V %*% t(A), A %*% d)))
+  stopifnot(isTRUE(all.equal(W, shifted, tolerance = 1e-8)), W >= 0)
+  data.frame(covariate = covariate, statistic = W, df = length(rows),
+    p_value = pchisq(W, length(rows), lower.tail = FALSE),
+    min_eigenvalue = min(eigenvalues), condition_number = kappa(V, exact = TRUE))
+}))
+omnibus$q_bh <- p.adjust(omnibus$p_value, "BH")
+omnibus <- omnibus[order(omnibus$p_value), ]
+row.names(omnibus) <- NULL
+knitr::kable(data.frame(Covariable = unname(covariate_labels[omnibus$covariate]),
+  "Wald chi cuadrado" = fmt(omnibus$statistic, 2), gl = omnibus$df,
+  "P-value conjunto" = fmt(omnibus$p_value), "q BH entre 8" = fmt(omnibus$q_bh),
+  check.names = FALSE),
+  caption = "Ocho pruebas globales exploratorias, con una familia BH propia.")
+```
+
+Para ERI, P= `r fmt(omnibus$p_value[omnibus$covariate == "eri"])`.
+La prueba responde a una pregunta global distinta y no garantiza mayor
+potencia que un contraste de un grado de libertad. La familia de ocho pruebas
+no sustituye retrospectivamente a la original de 24.
+
+**Es una aproximación Wald con covarianza bootstrap, no una prueba bootstrap
+calibrada bajo el nulo.** Su calibración con ridge adaptativo no se valida aquí.
+La invariancia algebraica al cambiar la referencia mantiene las mismas
+estimaciones; volver a ajustar un modelo penalizado bajo otra parametrización
+es una operación distinta.
+
+## Probabilidades e incertidumbre computacional
+
+Las diferencias expuesto menos no expuesto de pertenecer al perfil ambivalente
+se promedian sobre la distribución de covariables de cada muestra. Su resta
+hospital menos general es descriptiva: combina diferencias entre modelos y
+entre composiciones de las muestras. No es una comparación estandarizada a una
+única población objetivo, ni una prueba de equivalencia.
+
+```{r}
+#| label: audit06-probabilities
+ambivalent <- key$manuscript_class[key$manuscript_label == "Ambivalent"]
+stopifnot(length(ambivalent) == 1L)
+probabilities <- do.call(rbind, lapply(main_keys, function(covariate) {
+  g <- which(s$specification == "main" & s$estimand == "probability_difference" &
+             s$covariate == covariate & s$class == ambivalent & s$sample == "general")
+  h <- which(s$specification == "main" & s$estimand == "probability_difference" &
+             s$covariate == covariate & s$class == ambivalent & s$sample == "hospital")
+  stopifnot(length(g) == 1L, length(h) == 1L)
+  delta <- 100 * (b$draws[h, ] - b$draws[g, ])
+  interval <- quantile(delta, c(.025, .975), names = FALSE)
+  data.frame(covariate = covariate, class = ambivalent,
+    general_pp = 100 * s$value[g], hospital_pp = 100 * s$value[h],
+    difference_pp = 100 * (s$value[h] - s$value[g]),
+    lower_pp = interval[1], upper_pp = interval[2], n_valid = length(delta))
+}))
+knitr::kable(data.frame(Covariable = unname(covariate_labels[probabilities$covariate]),
+  "General pp" = fmt(probabilities$general_pp, 1),
+  "Hospital pp" = fmt(probabilities$hospital_pp, 1),
+  "Hospital menos general pp" = fmt(probabilities$difference_pp, 1),
+  "IC95% de la diferencia" = paste(fmt(probabilities$lower_pp, 1),
+                                 fmt(probabilities$upper_pp, 1), sep = " a "),
+  check.names = FALSE), caption = "Diferencias marginales de probabilidad de C4, en puntos porcentuales.")
+ridge_counts <- do.call(rbind, lapply(c("general", "hospital"), function(sample_name) {
+  selected <- b$point$diagnostics$specification == "main" &
+              b$point$diagnostics$sample == sample_name
+  used <- vapply(valid_replicates, function(x) {
+    d <- x$diagnostics[x$diagnostics$specification == "main" &
+                       x$diagnostics$sample == sample_name, , drop = FALSE]
+    stopifnot(nrow(d) == 1L)
+    d$lambda > 0
+  }, logical(1))
+  data.frame(sample = sample_name, lambda_point = b$point$diagnostics$lambda[selected],
+             bootstrap_ridge = sum(used), bootstrap_valid = b$valid)
+}))
+```
+
+El bootstrap tiene B= `r b$valid` réplicas válidas y `r b$failed` fallidas.
+Cada cola del 2,5% se apoya en aproximadamente `r fmt(.025 * b$valid, 1)`
+réplicas. Aumentar B reduciría ruido de Monte Carlo, sin aumentar el tamaño
+muestral ni resolver el solapamiento. Estos P-values son Wald, no proporciones
+empíricas de cola, por lo que no tienen resolución mínima de 1/(B+1).
+
+```{r}
+#| label: audit06-ridge
+knitr::kable(ridge_counts, col.names = c("Muestra", "Lambda puntual",
+  "Réplicas con ridge", "Réplicas válidas"), caption = "Penalización en la especificación principal.")
+```
+
+La regularización es ridge, no Firth. Los intervalos reflejan el procedimiento
+adaptativo guardado. Se mantienen fijos el número de clases y la decisión de
+invariancia. El remuestreo individual no reconstruye conglomerados, estratos
+ni la incertidumbre de calibración de los pesos.
+
+## Territorios y actividad sanitaria
+
+Se inspeccionan las etiquetas originales y se reconstruyen los filtros de los
+13 ítems y de las ocho covariables. Los recuentos son personas sin ponderar.
+El código valida la correspondencia con las filas guardadas en 03; no empareja
+participantes entre encuestas.
+
+```{r}
+#| label: audit06-geography-calculation
+#| include: false
+# Run from reproducibilidad/salidas with the stage-03 object asociaciones loaded.
+geography_audit <- local({
+  stopifnot(requireNamespace("haven", quietly = TRUE),
+            requireNamespace("janitor", quietly = TRUE))
+  resolve_input <- function(variable, candidates) {
+    explicit <- Sys.getenv(variable, "")
+    if (nzchar(explicit)) candidates <- explicit
+    found <- candidates[file.exists(candidates)]
+    if (!length(found)) stop("Input not found; set ", variable)
+    normalizePath(found[1L], winslash = "/", mustWork = TRUE)
+  }
+  input_paths <- c(
+    general = resolve_input("LCA_RAW_PATH", c(
+      "../datos/BD_2020_input3_match_not_miss.rds",
+      "../../BD_2020_input3_match_not_miss.rds")),
+    hospital = resolve_input("LCA_HOSPITAL_PATH", c(
+      "../datos/Base de datos 27.8.2019.dta",
+      "../../../_BASE DEF_FINAL/andrea/Base de datos 27.8.2019.dta")),
+    general_original = resolve_input("LCA_GENERAL_ORIGINAL_PATH", c(
+      "../datos/culorg 06-04- BD_05_02_19 (BD_22_10_18_lab_cul_org2)_post modelos_finales2.dta",
+      "../../culorg 06-04- BD_05_02_19 (BD_22_10_18_lab_cul_org2)_post modelos_finales2.dta")))
+  read_input <- function(path) {
+    encoding <- if (path == input_paths[["general_original"]]) "windows-1252" else NULL
+    data <- switch(tolower(tools::file_ext(path)),
+      rds = readRDS(path), dta = haven::read_dta(path, encoding = encoding), sav = haven::read_sav(path),
+      stop("Unsupported input type: ", tools::file_ext(path)))
+    janitor::clean_names(data)
+  }
+  raw <- lapply(input_paths, read_input)
+  stopifnot(identical(unname(tools::md5sum(input_paths[c("general", "hospital")])),
+                     unname(asociaciones$provenance$input_hash)))
+  items <- list(general = paste0("lid_des", c(1:2, 4:14)),
+                hospital = paste0("p39_", c(1:2, 4:14)))
+  common <- sprintf("I%02d", 1:13)
+  rows <- list()
+  for (sample in c("general", "hospital")) {
+    data <- raw[[sample]]
+    cached <- asociaciones$covariates[[sample]]
+    stopifnot(all(items[[sample]] %in% names(data)),
+              all(c(common, ".row_id") %in% names(cached)))
+    x <- lapply(data[items[[sample]]], as.numeric)
+    shift <- as.integer(min(unlist(x), na.rm = TRUE) == 0)
+    x <- as.data.frame(lapply(x, function(v) {
+      v <- v + shift
+      stopifnot(all(is.na(v) | v %in% 1:4))
+      v
+    }))
+    lca_rows <- which(complete.cases(x))
+    stopifnot(!anyDuplicated(cached$.row_id),
+              identical(as.integer(cached$.row_id), lca_rows),
+              identical(unname(as.matrix(x[lca_rows, , drop = FALSE])),
+                        unname(vapply(cached[common], as.numeric, numeric(nrow(cached))))))
+    assoc_rows <- which(complete.cases(cached[asociaciones$specifications$main]))
+    stopifnot(identical(as.integer(asociaciones$covariates$complete_main[[sample]]),
+                        assoc_rows))
+    rows[[sample]] <- list(base = seq_len(nrow(data)), LCA = lca_rows,
+                           associations = lca_rows[assoc_rows])
+  }
+
+  original <- raw$general_original
+  general <- raw$general
+  stopifnot(all(c("sbj_num", "a3", "a4") %in% names(original)),
+            all(c("sbj_num", "a3", "zona") %in% names(general)),
+            "hospital" %in% names(raw$hospital),
+            nrow(original) == nrow(general),
+            !anyNA(original$sbj_num), !anyNA(general$sbj_num),
+            !anyDuplicated(original$sbj_num), !anyDuplicated(general$sbj_num))
+  # The two general files have different row orders; keys are used only in memory.
+  original_order <- match(as.character(general$sbj_num), as.character(original$sbj_num))
+  stopifnot(!anyNA(original_order), !anyDuplicated(original_order))
+  original <- original[original_order, , drop = FALSE]
+  health_label <- names(attr(original$a3, "labels"))[attr(original$a3, "labels") == 14]
+  stopifnot(length(health_label) == 1L,
+            grepl("salud", health_label, ignore.case = TRUE))
+  health <- as.numeric(original$a3) == 14
+  stopifnot(!anyNA(health),
+            identical(health, as.character(general$a3) == "14"))
+  public_health <- health & as.numeric(original$a4) == 1
+  public_label <- names(attr(original$a4, "labels"))[attr(original$a4, "labels") == 1]
+  stopifnot(!anyNA(public_health), length(public_label) == 1L,
+            grepl("blico", public_label, ignore.case = TRUE))
+
+  places <- list(general = as.character(haven::as_factor(general$zona)),
+                 hospital = as.character(haven::as_factor(raw$hospital$hospital)))
+  hospital_labels <- attr(raw$hospital$hospital, "labels")
+  valdivia_code <- unname(hospital_labels[grepl("Valdivia", names(hospital_labels),
+                                              ignore.case = TRUE)])
+  stopifnot(length(valdivia_code) == 1L)
+  stopifnot(!anyNA(places$general), !anyNA(places$hospital),
+            setequal(places$general, c("Santiago", "Valpara\u00edso", "Concepci\u00f3n")),
+            setequal(as.numeric(raw$hospital$hospital), 1:3))
+  geo_counts <- do.call(rbind, lapply(names(rows), function(sample) {
+    do.call(rbind, lapply(names(rows[[sample]]), function(stage) {
+      counts <- table(places[[sample]][rows[[sample]][[stage]]])
+      data.frame(sample = sample, stage = stage, place = names(counts),
+                 n = as.integer(counts), row.names = NULL)
+    }))
+  }))
+  health_counts <- do.call(rbind, lapply(names(rows$general), function(stage) {
+    do.call(rbind, lapply(unique(places$general), function(place) {
+      ix <- rows$general[[stage]]
+      ix <- ix[places$general[ix] == place]
+      data.frame(stage = stage, place = place, n = length(ix),
+        healthcare = sum(health[ix]), public_healthcare = sum(public_health[ix]),
+        industry_no_response = sum(as.numeric(original$a3[ix]) == 99))
+    }))
+  }))
+
+  shared_zones <- places$general %in% c("Santiago", "Valpara\u00edso")
+  restrictions <- list(
+    exclude_all_healthcare = list(sample = "general", keep = !health),
+    exclude_healthcare_shared_zones = list(sample = "general", keep = !(health & shared_zones)),
+    general_concepcion_only = list(sample = "general", keep = places$general == "Concepci\u00f3n"),
+    hospital_valdivia_only = list(sample = "hospital",
+                                 keep = as.numeric(raw$hospital$hospital) == valdivia_code))
+  restriction_counts <- do.call(rbind, lapply(names(restrictions), function(rule) {
+    restriction <- restrictions[[rule]]
+    do.call(rbind, lapply(names(rows[[restriction$sample]]), function(stage) {
+      ix <- rows[[restriction$sample]][[stage]]
+      data.frame(restriction = rule, sample = restriction$sample, stage = stage,
+                 original_n = length(ix), retained_n = sum(restriction$keep[ix]),
+                 excluded_n = sum(!restriction$keep[ix]))
+    }))
+  }))
+  stopifnot(all(restriction_counts$original_n ==
+                  restriction_counts$retained_n + restriction_counts$excluded_n))
+
+  geography_variables <- do.call(rbind, lapply(names(raw), function(sample) {
+    data <- raw[[sample]]
+    labels <- enc2utf8(vapply(data, function(x) paste(attr(x, "label"), collapse = " | "), ""))
+    # Historical general metadata retains Windows-1252 bytes in some labels.
+    bad_encoding <- !validUTF8(labels)
+    labels[bad_encoding] <- iconv(labels[bad_encoding], from = "windows-1252", to = "UTF-8")
+    stopifnot(!anyNA(labels), all(validUTF8(labels)))
+    candidates <- names(data) == "hospital" |
+      grepl("zona|comuna|regi.n|region|ciudad|residenc|provincia|localidad|domicilio|direcci.n",
+            paste(names(data), labels), ignore.case = TRUE)
+    data.frame(sample = sample, variable = names(data)[candidates],
+               label = unname(labels[candidates]), row.names = NULL)
+  }))
+  list(geo_counts = geo_counts, health_counts = health_counts,
+       restriction_counts = restriction_counts, geography_variables = geography_variables,
+       input_paths = data.frame(source = names(input_paths), path = unname(input_paths),
+                                md5 = unname(tools::md5sum(input_paths))),
+       health_source_label = health_label)
+})
+geo_counts <- geography_audit$geo_counts
+health_counts <- geography_audit$health_counts
+restriction_counts <- geography_audit$restriction_counts
+geography_variables <- geography_audit$geography_variables
+input_paths <- geography_audit$input_paths
+```
+
+```{r}
+#| label: audit06-geography-tables
+geo_display <- reshape(geo_counts, idvar = c("sample", "place"),
+                       timevar = "stage", direction = "wide")
+geo_display <- geo_display[, c("sample", "place", "n.base", "n.LCA", "n.associations")]
+knitr::kable(geo_display, row.names = FALSE,
+  col.names = c("Muestra", "Lugar", "Base", "LCA", "Asociaciones"),
+  caption = "Distribución por zona general y hospital participante.")
+knitr::kable(health_counts, row.names = FALSE,
+  col.names = c("Etapa", "Zona", "Total", "Salud", "Salud pública", "Rama sin respuesta"),
+  caption = "Actividad sanitaria y rama sin respuesta, por zona y etapa.")
+```
+
+La muestra general cubre Santiago, Valparaíso y Concepción. Los centros son
+Sótero del Río (Puente Alto, Santiago), Gustavo Fricke (Viña del Mar) y Valdivia.
+Hay coincidencia territorial parcial. La ubicación institucional no establece
+la residencia del personal.
+
+Se valida actividad sanitaria con A3= 14, `r geography_audit$health_source_label`.
+Los recuentos **no son duplicados detectados ni cotas estrictas**: puede haber
+cambios laborales, varios empleos, contratistas o movilidad residencial.
+La categoría original A3= 99 (sin respuesta) se cuenta por separado y permanece
+en las restricciones basadas únicamente en excluir A3= 14; no se considera
+confirmada como actividad no sanitaria. La clasificación pública estricta usa
+A4= 1 original, porque sect_priv no separa adecuadamente las respuestas
+desconocidas y otras categorías.
+
+```{r}
+#| label: audit06-geographic-variables
+knitr::kable(geography_variables,
+  caption = "Variables detectadas mediante búsqueda en nombres y etiquetas geográficas.")
+```
+
+La búsqueda documenta lo disponible en estas bases, sin asegurar que no exista
+información más fina en cuestionarios o archivos de terreno separados.
+No se usan similitudes de edad, sexo o respuestas para atribuir identidad.
+
+## Restricciones factibles
+
+```{r}
+#| label: audit06-restrictions
+restriction_labels <- c(exclude_all_healthcare = "General: excluir toda rama salud",
+  exclude_healthcare_shared_zones = "General: excluir salud en Santiago/Valparaíso",
+  general_concepcion_only = "General: solo Concepción",
+  hospital_valdivia_only = "Hospital: solo Valdivia")
+restricted_display <- reshape(restriction_counts[, c("restriction", "stage", "retained_n")],
+  idvar = "restriction", timevar = "stage", direction = "wide")
+restricted_display$restriction <- unname(restriction_labels[restricted_display$restriction])
+knitr::kable(restricted_display[, c("restriction", "retained_n.base",
+  "retained_n.LCA", "retained_n.associations")], row.names = FALSE,
+  col.names = c("Restricción", "Base", "LCA", "Asociaciones"),
+  caption = "Personas conservadas. Modelos restringidos aún no estimados.")
+```
+
+Se prioriza como sensibilidad excluir la actividad sanitaria de la muestra
+general, conservando la hospitalaria completa. Excluir solamente salud en
+Santiago y Valparaíso depende más de supuestos territoriales. Restringir la
+general a Concepción o la hospitalaria a Valdivia pierde más observaciones y
+cambia la población comparada, mezclando contexto laboral y territorio.
+
+Una sensibilidad completa debe repetir medición compartida, evaluación de
+invariancia, alineación de clases, matriz de error de clasificación y
+asociaciones, con los filtros aplicados desde el inicio. Después se compararían
+prevalencias, ROR y probabilidades con el análisis completo.
+Para comparar probabilidades bajo igual composición debe definirse una
+distribución común de covariables y comprobar soporte suficiente.
+
+La eliminación de candidatos no identifica duplicados ni garantiza
+independencia. Tampoco se puede suponer que ignorar dependencia necesariamente
+estrecha los intervalos del ROR: en la varianza de una diferencia la covarianza
+entra restando y el efecto depende de su signo y magnitud.
+
+## Lectura para revisar la v20
+
+Conviene presentar tamaños e incertidumbre junto con P-values nominales y q.
+La ausencia de rechazo tras BH no justifica por sí sola la expresión
+«asociaciones ampliamente concordantes». Una formulación más precisa distingue
+señales exploratorias, falta de evidencia concluyente de heterogeneidad y
+ausencia de demostración de equivalencia.
+
+La auditoría no cambia automáticamente el resultado principal sobre medición
+compartida. Las restricciones propuestas son sensibilidades del supuesto de
+independencia y de la población comparada; sus resultados aún no están disponibles.
+
+## Reproducción y procedencia
+
+Desde reproducibilidad:
+
+```powershell
+& (Get-Command quarto.exe).Source render 06_multiplicidad_solapamiento.qmd
+Rscript --vanilla verificar.R --audit06
+```
+
+Para otro equipo, establecer las rutas privadas antes de renderizar:
+
+```powershell
+$env:LCA_RAW_PATH = 'D:/datos/BD_2020_input3_match_not_miss.rds'
+$env:LCA_HOSPITAL_PATH = 'D:/datos/Base de datos 27.8.2019.dta'
+$env:LCA_GENERAL_ORIGINAL_PATH = 'D:/datos/general_original.dta'
+```
+
+Se necesitan checkpoints compatibles de 02, 03 y 05, el CSV de asociaciones
+bootstrap y las fuentes R usadas por el bootstrap. Los chequeos detienen la
+ejecución si cambian las correspondencias, clases o emparejamiento de réplicas.
+Las salidas incluyen tablas agregadas y procedencia, sin microdatos ni
+identificadores.
+
+```{r}
+#| label: audit06-export
+#| include: false
+audit_inputs <- c(checkpoint_measurement = "02_hospital.RData",
+  checkpoint_associations = "03_asociaciones.RData",
+  checkpoint_bootstrap = "05_bootstrap.RData",
+  canonical_csv = "bootstrap_associations.csv",
+  report_source = "../06_multiplicidad_solapamiento.qmd",
+  association_source = "../03_asociaciones.qmd",
+  bootstrap_source = "../05_bootstrap.qmd",
+  bootstrap_helper = "../R/bootstrap_shared.R",
+  association_helper = "../R/association_models.R",
+  setNames(input_paths$path, input_paths$source))
+provenance <- data.frame(role = names(audit_inputs), file = basename(audit_inputs),
+  sha256 = vapply(audit_inputs, function(path)
+    digest::digest(file = path, algo = "sha256"), character(1)),
+  size_bytes = as.numeric(file.info(audit_inputs)$size), row.names = NULL)
+checks <- c(compatible_checkpoints = TRUE, raw_class_alignment = TRUE,
+  paired_replicates = TRUE, bootstrap_ror_reproduced = TRUE,
+  canonical_csv_reproduced = TRUE, omnibus_positive_definite = TRUE,
+  omnibus_contrast_invariance = TRUE, geography_row_alignment = TRUE,
+  original_health_code_verified = TRUE)
+audit <- list(status = "audit_only_no_refit", created = Sys.time(),
+  ror = ror, omnibus = omnibus, probabilities = probabilities, ridge = ridge_counts,
+  geography = geo_counts, health = health_counts, restrictions = restriction_counts,
+  variables = geography_variables, provenance = provenance, checks = checks,
+  session = sessionInfo())
+tables <- list(ror = ror, omnibus = omnibus, probabilidades = probabilities,
+  geografia = geo_counts, salud = health_counts, restricciones = restriction_counts,
+  procedencia = provenance)
+for (name in names(tables))
+  write.csv(tables[[name]], paste0("06_", name, ".csv"), row.names = FALSE,
+            fileEncoding = "UTF-8")
+saveRDS(audit, "06_auditoria.rds", compress = "xz")
+png("06_ror.png", width = 1600, height = 1800, res = 170, type = "cairo")
+par(mar = c(4, 17, 2, 1))
+positions <- rev(seq_len(nrow(ror)))
+plot(ror$estimate, positions, log = "x", xlim = range(c(ror$lower, ror$upper)),
+  ylim = c(.5, nrow(ror) + .5), yaxt = "n", ylab = "", pch = 19,
+  xlab = "ROR hospital/general (escala logaritmica)", cex = .8)
+segments(ror$lower, positions, ror$upper, positions, col = "#24566b")
+abline(v = 1, lty = 2, col = "gray45")
+axis(2, at = positions, labels = paste0(covariate_labels[ror$covariate],
+  ": C", ror$class, "/C", ror$reference_class), las = 1, cex.axis = .65)
+dev.off()
+```
+
+```{r}
+#| label: audit06-ror-figure
+#| echo: false
+#| fig-cap: "ROR e intervalos percentiles puntuales del 95%. Línea en ROR= 1; intervalos sin ajuste de multiplicidad."
+knitr::include_graphics(normalizePath("06_ror.png", winslash = "/"), rel_path = FALSE)
+```
+
+```{r}
+#| label: audit06-provenance
+knitr::kable(provenance, caption = "Entradas y huellas SHA-256 de esta ejecución.")
+stopifnot(all(audit$checks))
+cat("Comprobaciones internas completadas. Auditoría sin reestimación de modelos restringidos.\n")
+```
+
+### Referencias
+
+1. R Core Team. Adjust P-values for Multiple Comparisons. Documentación de stats::p.adjust.
+   <https://stat.ethz.ch/R-manual/R-devel/library/stats/html/p.adjust.html>.
+2. Kaufman JS, MacLehose RF. Which of these things is not like the others?
+   Cancer. 2013;119:4216-4222.
+   <https://pmc.ncbi.nlm.nih.gov/articles/PMC4026206/>.
+3. Wald A. Tests of statistical hypotheses concerning several parameters when
+   the number of observations is large. Trans Am Math Soc. 1943;54:426-482.
+   <https://doi.org/10.1090/S0002-9947-1943-0012401-3>.
+
+Estas referencias fundamentan principios de inferencia; no validan por sí solas
+la calibración de la LCA con ridge adaptativo.
+
+```{r}
+#| label: audit06-session
+sessionInfo()
+```
+

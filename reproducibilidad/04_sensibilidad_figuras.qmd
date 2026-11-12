@@ -1,0 +1,1312 @@
+---
+title: "04. Sensibilidad de enumeración y figuras del artículo"
+date: last-modified
+format:
+  html:
+    toc: true
+    code-fold: true
+    embed-resources: true
+execute:
+  error: false
+  warning: true
+  cache: false
+---
+
+# Qué produce
+
+Lee `01_general.RData` y `02_hospital.RData`. Reproduce la sensibilidad
+de 5/8 clases y las Figuras 1–4, exportando modelos y tablas antes no guardados.
+La Tabla S3 del manuscrito corresponde a la solución de ocho clases; cinco
+clases es trabajo adicional disponible.
+
+Reutiliza ajustes de enumeración guardados por 01 si corresponden a los mismos
+datos, o su propio checkpoint validado. Sin esos ajustes, estima los que faltan
+con 4.000 inicios y comprueba sus log-verosimilitudes contra la enumeración.
+No repite el BLRT ni vuelve a estimar los modelos que acaba de guardar 01.
+Para reestimar la medición general, ejecutar primero 01 con `LCA_REFIT=1`.
+
+Este QMD reproduce el cálculo histórico; revisar las etiquetas e interpretaciones
+heredadas con `OBSERVACIONES_ANSOLEAGA.md` antes de incorporarlas a una revisión.
+La Figura S1 de flujo y STROBE son piezas editoriales, identificadas aparte
+en el mapa del manuscrito.
+
+```{r}
+#| label: directorio
+dir.create("salidas", showWarnings = FALSE)
+knitr::opts_knit$set(root.dir = normalizePath("salidas", winslash = "/"))
+```
+
+
+# Why this notebook
+
+The main analysis retains **4 latent leadership profiles** on grounds of parsimony, entropy and interpretability. However, in the class-enumeration table (Table 1 of the main file, refit with 4,000 random starts on the **13 items** — item 3 excluded) the **BIC is minimised at 8 classes and the CAIC at 7** (while AIC and SABIC keep decreasing), so the larger, information-criterion-preferred solution lies around 7–8 classes. We examine the **8-class** solution here because it is the **global BIC minimum** (BIC = 43122.3 at 8, vs 43142.1 at 7 and 43154.3 at 9).
+
+This notebook is an **enumeration-uncertainty sensitivity analysis**: it re-estimates the *same* measurement model with `nclass = 8`, characterises those 8 profiles, shows **how they map onto the retained 4 classes**, and checks whether the **covariate associations replicate**. It is complementary to — not a replacement for — the naive-vs-BCH classification-error sensitivity (Table S3 of the main file).
+
+> Same data, same 13 items (item 3 excluded), same concomitant (`~ sex_woman`),
+> same seed (2125) as the main analysis, so the 4-class results here reproduce
+> the main file exactly.
+
+```{r}
+#| label: sens-setup
+suppressMessages({
+  library(glca); library(haven); library(dplyr); library(tidyr); library(tibble)
+  library(purrr); library(ggplot2); library(scales); library(knitr); library(kableExtra)
+  library(future); library(furrr)
+})
+set.seed(2125); options(scipen = 999)
+## Random starting values for every glca() fit below (local-maxima safeguard).
+## Lower to ~50 for quick drafts; keep 4000 for the final run. Same lucky seed.
+n_init <- 4000
+```
+
+```{r}
+#| label: sens-load-data
+checkpoint_env <- new.env(parent = emptyenv())
+stopifnot(identical(load("01_general.RData", envir = checkpoint_env), "general"))
+general <- checkpoint_env$general
+source("../R/load_leadership_results.R")
+verified_general <- load_leadership_results("lca_results.rds")
+stopifnot(identical(general$model_input_hash, verified_general$model_input_hash),
+          identical(general$analysis_data_hash, verified_general$analysis_data_hash))
+items <- general$item_order
+d_lca <- general$analysis_data
+stopifnot(length(items) == 13L, !"lid_des3" %in% items,
+          all(vapply(d_lca[items], is.ordered, logical(1))),
+          all(complete.cases(d_lca[, c(items, "sex_woman")])))
+input_hash <- digest::digest(d_lca[, c(items, "sex_woman")], algo = "sha256")
+code_hash <- digest::digest(file = "../04_sensibilidad_figuras.qmd", algo = "sha256")
+available_fits <- list()
+if (file.exists("lca_measurement_fits.rds")) {
+  measurement <- readRDS("lca_measurement_fits.rds")
+  stopifnot(identical(measurement$model_input_hash, general$model_input_hash))
+  available_fits <- setNames(measurement$fits[2:10], as.character(2:10))
+}
+if (Sys.getenv("LCA_REFIT", "0") != "1" &&
+    file.exists("04_sensibilidad.RData")) {
+  stopifnot(identical(load("04_sensibilidad.RData", envir = checkpoint_env), "sensibilidad"))
+  previous <- checkpoint_env$sensibilidad
+  if (identical(previous$input_hash, input_hash) &&
+      identical(previous$code_hash, code_hash)) {
+    available_fits[c("4", "5", "8")] <- previous$fits[c("k4", "k5", "k8")]
+    if (!is.null(previous$enumeration_fits)) available_fits <- previous$enumeration_fits
+  }
+}
+cat("Analysis n:", nrow(d_lca), "; items:", length(items), "\n")
+```
+
+```{r}
+#| label: sens-helpers
+relative_entropy <- function(post) {
+  post <- as.matrix(post); n <- nrow(post); K <- ncol(post)
+  1 - (-sum(post * log(pmax(post, 1e-12)))) / (n * log(K))
+}
+get_post <- function(g) { p <- g$posterior; if (is.list(p)) p <- p[[1]]; as.matrix(p) }
+get_rho  <- function(g) { r <- g$param$rho; if (is.list(r) && is.list(r[[1]])) r <- r[[1]]; r }
+
+## classification matrix D[t,w] = P(W=w | X=t)  (full sample, fixed)
+class_matrix <- function(post, modal) {
+  K <- ncol(post); ind <- outer(modal, 1:K, `==`) * 1
+  A <- t(as.matrix(post)) %*% ind; A / rowSums(A)
+}
+## ML three-step for one covariate z, reference class = `ref` (Vermunt 2010).
+ml3step <- function(z, post, modal, sw = NULL, ref = 1L, D = NULL) {
+  post <- as.matrix(post); K <- ncol(post)
+  if (is.null(sw)) sw <- rep(1, nrow(post))
+  if (is.null(D)) D <- class_matrix(post, modal)     # fixed D on FULL sample
+  ## reorder so `ref` is the first (baseline) category
+  ord <- c(ref, setdiff(seq_len(K), ref))
+  D <- D[ord, ord]; modal <- match(modal, ord)
+  z <- as.numeric(z); ok <- !is.na(z)
+  z <- z[ok]; modal <- modal[ok]; sw <- sw[ok]; n <- length(z)
+  Dw <- t(D[, modal])
+  negll <- function(par) {
+    a <- c(0, par[seq(1, 2*(K-1), 2)]); b <- c(0, par[seq(2, 2*(K-1), 2)])
+    eta <- outer(rep(1, n), a) + outer(z, b); eta <- eta - apply(eta, 1, max)
+    pis <- exp(eta); pis <- pis / rowSums(pis)
+    -sum(sw * log(pmax(rowSums(pis * Dw), 1e-12)))
+  }
+  fit <- optim(rep(0, 2*(K-1)), negll, method = "BFGS", hessian = TRUE)
+  V <- tryCatch(solve(fit$hessian), error = function(e) matrix(NA, length(fit$par), length(fit$par)))
+  bi <- seq(2, 2*(K-1), 2); b <- fit$par[bi]; se <- sqrt(diag(V))[bi]
+  tibble::tibble(class_ord = 2:K, orig_class = ord[-1],
+                 OR = exp(b), lo = exp(b - 1.96*se), hi = exp(b + 1.96*se))
+}
+```
+
+# Fit the 4- and 8-class models
+
+```{r}
+#| label: sens-fits
+item_f <- as.formula(paste0("item(", paste(items, collapse = ", "), ") ~ sex_woman"))
+Kbig <- 8                      # the larger, IC-preferred solution (global BIC minimum, 13 items)
+
+fit_glca <- function(K) {
+  cached <- available_fits[[as.character(K)]]
+  if (!is.null(cached)) return(cached)
+  RNGkind("Mersenne-Twister")
+  for (fit_seed in 2125:2134) {
+    model <- tryCatch(glca(item_f, data = d_lca, nclass = K, seed = fit_seed,
+                           n.init = n_init, verbose = FALSE),
+                      error = function(condition) NULL)
+    if (!is.null(model)) {
+      attr(model, "successful_seed") <- fit_seed
+      return(model)
+    }
+  }
+  stop("glca failed for nclass=", K, " across seeds 2125-2134.")
+}
+missing_classes <- setdiff(as.character(2:10), names(available_fits))
+if (length(missing_classes)) {
+  requested_workers <- as.numeric(Sys.getenv("LCA_WORKERS", "6"))
+  stopifnot(length(requested_workers) == 1L, is.finite(requested_workers),
+            requested_workers >= 1, requested_workers == floor(requested_workers))
+  detected_cores <- parallel::detectCores(logical = FALSE)
+  if (is.na(detected_cores)) detected_cores <- 2L
+  workers <- min(requested_workers, max(1L, detected_cores - 2L), length(missing_classes))
+  future::plan(future::multisession, workers = workers)
+  new_fits <- tryCatch(
+    furrr::future_map(as.integer(missing_classes), fit_glca,
+                     .options = furrr::furrr_options(seed = TRUE, packages = "glca")),
+    finally = future::plan(future::sequential))
+  available_fits[missing_classes] <- new_fits
+}
+expected_items <- unname(as.matrix(data.frame(lapply(d_lca[items], as.integer))))
+expected_concomitant <- unname(model.matrix(~ sex_woman, data = d_lca))
+for (class_count in 2:10) {
+  fitted <- available_fits[[as.character(class_count)]]
+  stopifnot(fitted$model$C == class_count,
+            identical(fitted$var.names$y.names, items),
+            isTRUE(all.equal(unname(fitted$datalist$x[[1]]), expected_concomitant,
+                             check.attributes = FALSE)),
+            isTRUE(all.equal(unname(fitted$datalist$y[[1]]), expected_items,
+                            check.attributes = FALSE)),
+            abs(fitted$gof$loglik - general$fit_tbl$logLik[
+              match(class_count, general$fit_tbl$Classes)]) < 1e-3)
+}
+measurement_fits <- vector("list", 10L)
+measurement_fits[2:10] <- available_fits[as.character(2:10)]
+saveRDS(list(fits = measurement_fits, model_input_hash = general$model_input_hash,
+             provenance = list(source = "04_sensibilidad_figuras.qmd",
+                               n_init = n_init, seed = 2125L,
+                               input_hash = input_hash, code_hash = code_hash,
+                               session = capture.output(sessionInfo()))),
+        "lca_measurement_fits.rds")
+g4 <- fit_glca(4)
+g9 <- fit_glca(Kbig)
+
+p4 <- get_post(g4); p9 <- get_post(g9)
+modal4 <- max.col(p4, ties.method = "first"); modal9 <- max.col(p9, ties.method = "first")
+W <- d_lca$.w
+stopifnot(length(modal4) == nrow(d_lca), length(modal9) == nrow(d_lca))
+
+wsize <- function(m, K) vapply(1:K, function(t) sum(W[m == t]), numeric(1)) / sum(W) * 100
+
+tibble::tibble(
+  Solution = c("4-class (retained)", "8-class (global BIC minimum)"),
+  logLik   = c(g4$gof$loglik, g9$gof$loglik),
+  AIC      = c(g4$gof$aic, g9$gof$aic),
+  BIC      = c(g4$gof$bic, g9$gof$bic),
+  Entropy  = c(relative_entropy(p4), relative_entropy(p9)),
+  `Smallest class %` = c(min(wsize(modal4, 4)), min(wsize(modal9, Kbig)))
+) |>
+  dplyr::mutate(dplyr::across(where(is.numeric), ~round(.x, 3))) |>
+  knitr::kable("markdown", caption = "Fit comparison: 4-class vs 8-class.")
+```
+
+# What characterises the 8 profiles?
+
+Each item is scored by the probability of the **two high-frequency categories** (*fairly often* + *almost always/always*). Items are grouped by behavior **type** (Tyrannical / *laissez-faire* / Constructive). These are behavior domains, not mutually exclusive categories of supervisors. Empirical classes summarize their joint patterns of endorsement.
+
+```{r}
+#| label: sens-profile-scores
+## item 3 (lid_des3) is excluded from the LCA, so it is absent here too; this
+## vector must stay aligned with `items` (13 entries) for top2/rho9 indexing.
+item_type <- c(
+  lid_des1="Destructive",  lid_des2="Constructive",
+  lid_des4="Destructive",  lid_des5="Laissez-faire", lid_des6="Constructive",
+  lid_des7="Laissez-faire",lid_des8="Destructive",   lid_des9="Laissez-faire",
+  lid_des10="Destructive", lid_des11="Constructive", lid_des12="Constructive",
+  lid_des13="Constructive",lid_des14="Constructive")
+behavior_labels <- c(Destructive = "'Tyrannical'", `Laissez-faire` = "italic('laissez-faire')",
+                     Constructive = "'Constructive'")
+behavior_labeller <- ggplot2::as_labeller(behavior_labels, default = ggplot2::label_parsed)
+
+rho9 <- get_rho(g9)
+top2 <- t(vapply(seq_along(items), function(j) rho9[[j]][,3] + rho9[[j]][,4], numeric(Kbig)))
+rownames(top2) <- items; colnames(top2) <- paste0("C", 1:Kbig)
+
+## family means per class -> data-driven labels (no hand-coding of class numbers)
+fam_mean <- function(type) colMeans(top2[item_type[rownames(top2)] == type, , drop = FALSE])
+fam <- tibble::tibble(
+  Class = paste0("C", 1:Kbig),
+  size  = round(wsize(modal9, Kbig), 1),
+  Constructive  = round(fam_mean("Constructive"), 2),
+  `Laissez-faire`= round(fam_mean("Laissez-faire"), 2),
+  Destructive   = round(fam_mean("Destructive"), 2))
+
+label_class <- function(con, lf, des) {
+  ## order matters: ambivalent (high constructive AND tyrannical) is checked
+  ## before low constructive with elevated laissez-faire/tyrannical behaviors.
+  if (con >= 0.55 && des >= 0.30)            "Ambivalent (high on all)"
+  else if (con >= 0.75)                      "Strong constructive"
+  else if (con >= 0.45)                      "Moderately constructive"
+  else if (con < 0.30 && (des >= 0.20 || lf >= 0.45)) "Tyrannical / avoidant"
+  else                                       "Disengaged"
+}
+fam$Label <- mapply(label_class, fam$Constructive, fam$`Laissez-faire`, fam$Destructive)
+fam |>
+  dplyr::rename(`*laissez-faire*` = `Laissez-faire`, Tyrannical = Destructive) |>
+  knitr::kable("markdown",
+  caption = "8-class profiles: weighted size, family scores (mean P of top-2 categories), and label.")
+```
+
+```{r}
+#| label: sens-fig-9class
+#| fig-width: 11
+#| fig-height: 7
+#| fig-cap: "Item-response probabilities (P of the two high-frequency categories) for the 8-class solution. Rows = items grouped by behavior type; columns = profiles ordered by decreasing constructive endorsement."
+ord9 <- order(-fam$Constructive, fam$Destructive)          # constructive -> toxic
+plot_labels8 <- vapply(fam$Label, function(label)
+  paste(strwrap(label, width = 16), collapse = "\n"), character(1))
+lab9 <- paste0(fam$Class, "\n", plot_labels8, "\n(", fam$size, "%)")[ord9]
+
+long <- as.data.frame(top2) |>
+  tibble::rownames_to_column("item") |>
+  tidyr::pivot_longer(-item, names_to = "Class", values_to = "p") |>
+  dplyr::mutate(type = factor(item_type[item],
+                  levels = c("Destructive","Laissez-faire","Constructive")),
+                item = factor(item, levels = rev(items)),
+                Class = factor(Class, levels = paste0("C", 1:Kbig)[ord9],
+                               labels = lab9))
+ggplot(long, aes(Class, item, fill = p)) +
+  geom_tile(colour = "white") +
+  geom_text(aes(label = sprintf("%.0f", p*100)), size = 2.6, colour = "grey20") +
+  facet_grid(type ~ ., scales = "free_y", space = "free_y", switch = "y",
+             labeller = labeller(type = behavior_labeller)) +
+  scale_fill_gradient(low = "#F7FBFF", high = "#08519C",
+                      labels = scales::percent, name = "P(top-2)") +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(size = 8), legend.position = "right",
+        strip.placement = "outside",
+        strip.text.y.left = element_text(face = "bold", angle = 0))
+ggsave("Figure_S_8class_itemprob.png", width = 11, height = 7, dpi = 300, bg = "white")
+```
+
+# Classification quality — AvePP and OCC
+
+Average posterior probabilities (AvePP) and odds of correct classification (OCC)
+for **both** solutions. AvePP$_k$ is the mean posterior of class $k$ among its
+modal members (good if $>$ .70); OCC$_k = [\text{AvePP}_k/(1-\text{AvePP}_k)] \big/
+[\pi_k/(1-\pi_k)]$ with $\pi_k$ the estimated prevalence (OCC $>$ 5 = good). High
+AvePP in the finer 8-class partition shows its extra profiles are still assigned
+with confidence — directly relevant to the enumeration-robustness question.
+
+```{r}
+#| label: sens-avepp-occ
+#| results: "hold"
+class_diag <- function(post, modal) {
+  K <- ncol(post); pi_k <- colMeans(post)
+  AvePP <- vapply(1:K, function(k) mean(post[modal == k, k]), numeric(1))
+  OCC   <- (AvePP / (1 - AvePP)) / (pi_k / (1 - pi_k))
+  tibble::tibble(Class = paste0("C", 1:K),
+                 `n (modal)` = as.integer(table(factor(modal, levels = 1:K))),
+                 pi_k  = round(pi_k, 3),
+                 AvePP = round(AvePP, 3),
+                 OCC   = round(OCC, 2))
+}
+cd4 <- class_diag(p4, modal4)
+cd9 <- class_diag(p9, modal9)
+cd9$Label <- fam$Label                       # data-driven 8-class labels (C1..C8)
+
+cd4 |> knitr::kable("markdown",
+  caption = "Classification diagnostics -- 4-class (retained): AvePP and OCC.")
+cd9 |> knitr::kable("markdown",
+  caption = "Classification diagnostics -- 8-class: AvePP and OCC (with profile labels).")
+```
+
+```{r}
+#| label: sens-avepp-sentence
+#| echo: false
+#| results: asis
+all70 <- all(c(cd4$AvePP, cd9$AvePP) > 0.70)
+cat(sprintf(
+  "Average posterior probabilities are high in both solutions (4-class %.2f-%.2f; 8-class %.2f-%.2f)%s, with odds of correct classification above %.0f throughout. Even the finer 8-class partition assigns members with high certainty, coherent with the preserved entropy.\n",
+  min(cd4$AvePP), max(cd4$AvePP), min(cd9$AvePP), max(cd9$AvePP),
+  if (all70) ", all exceeding .70" else "", floor(min(c(cd4$OCC, cd9$OCC)))))
+```
+
+# How do the 8 classes map onto the retained 4?
+
+If the 8-class solution simply **refines** the 4 (each 4-class profile splitting into
+finer gradations) the conclusions are robust. A wholesale re-arrangement would instead
+signal that the 4-class structure is fragile.
+
+```{r}
+#| label: sens-crosstab
+ct <- table(`4-class` = paste0("C", modal4), `8-class` = paste0("C", modal9))
+## row-normalised: where does each 4-class profile go among the 8?
+round(prop.table(ct, 1) * 100, 0) |>
+  knitr::kable("markdown",
+    caption = "Row % — how each retained 4-class profile distributes across the 8 classes (modal assignments).")
+```
+
+```{r}
+#| label: sens-crosstab-parent
+## dominant 4-class parent of each 8-class (column-wise)
+parent <- apply(ct, 2, function(col) rownames(ct)[which.max(col)])
+tibble::tibble(`8-class` = colnames(ct),
+               `Dominant 4-class parent` = parent,
+               `% in that parent` = round(apply(ct, 2, function(c) max(c)/sum(c)*100), 0)) |>
+  knitr::kable("markdown", caption = "Each 8-class profile's dominant 4-class parent.")
+```
+
+# Do the covariate associations replicate?
+
+Weighted prevalence of the key adverse exposures by 8-class profile (columns ordered
+by decreasing constructive endorsement, as in the figure). If the pattern seen in the 4-class analysis
+(adverse exposures concentrated in disengaged/ambivalent profiles) is preserved, the
+substantive story is robust.
+
+```{r}
+#| label: sens-covariate-prev
+covs <- c(eri="Effort-reward imbalance", bully_self="Self-labeled bullying",
+          naq_frequent="Frequent negative acts (NAQ)", sex_harass="Sexual harassment",
+          auditc_hazard="Hazardous alcohol (AUDIT-C)", no_union="Absence of union",
+          sex_woman="Women")
+wmean <- function(x, idx) { ok <- idx & !is.na(x); sum(W[ok]*x[ok]) / sum(W[ok]) }
+prev <- sapply(names(covs), function(k)
+  vapply(1:Kbig, function(t) wmean(d_lca[[k]], modal9 == t) * 100, numeric(1)))
+rownames(prev) <- paste0("C", 1:Kbig)
+prev <- prev[ord9, ]                                  # constructive -> toxic order
+out <- as.data.frame(round(t(prev), 1)); colnames(out) <- fam$Class[ord9]
+out <- tibble::rownames_to_column(
+  `rownames<-`(out, unname(covs[rownames(out)])), "Exposure (%)")
+
+## continuous. NB: names(x) label the output rows, values are the column keys
+## passed to FUN -> use c(Label = column). (The reverse gives NaN: it would look
+## up non-existent columns "Age"/"Job satisfaction" instead of age/job_sat.)
+cont <- sapply(c(Age = "age", `Job satisfaction` = "job_sat"), function(k)
+  vapply(1:Kbig, function(t) wmean(d_lca[[k]], modal9 == t), numeric(1)))
+cont <- round(t(cont[ord9, ]), 1); colnames(cont) <- fam$Class[ord9]
+out2 <- tibble::rownames_to_column(as.data.frame(cont), "Mean")
+names(out2)[1] <- "Exposure (%)"
+
+dplyr::bind_rows(out, out2) |>
+  knitr::kable("markdown",
+    caption = "Weighted covariate prevalence (%) and continuous means by 8-class profile (ordered by decreasing constructive endorsement).")
+```
+
+```{r}
+#| label: sens-ml3step-or
+#| fig-cap: "ML three-step odds ratios (95% CI) for each adverse exposure: odds of membership in each 8-class profile vs the strongest-constructive reference. CIs widen for the smallest class, with elevated tyrannical and avoidant behaviors; read directionally."
+## reference = strongest-constructive class (lowest exposure, 'healthy' baseline)
+ref9 <- order(-fam$Constructive, fam$Destructive)[1]
+exps <- c("eri","bully_self","naq_frequent","auditc_hazard","no_union")
+or_tab <- purrr::map_dfr(exps, function(k) {
+  m <- tryCatch(ml3step(d_lca[[k]], p9, modal9, sw = W, ref = ref9),
+                error = function(e) NULL)
+  if (is.null(m)) return(NULL)
+  m$Exposure <- unname(covs[k]); m
+})
+ref_lab <- paste0("C", ref9)
+or_tab |>
+  dplyr::mutate(Profile = paste0("C", orig_class),
+                lab = fam$Label[orig_class]) |>
+  dplyr::transmute(Exposure, Profile = paste0(Profile, " ", lab),
+                   `OR vs ref` = sprintf("%.2f (%.2f-%.2f)", OR, lo, hi)) |>
+  knitr::kable("markdown",
+    caption = paste0("ML three-step odds ratios, reference = ", ref_lab,
+                     " (strongest constructive). OR>1 = higher exposure odds than the constructive baseline."))
+```
+
+# The 5-class solution (AWE minimum)
+
+The 8-class model above is the **global BIC minimum** on the 13 items. Parsimony-oriented criteria point lower: in the enumeration the **AWE (approximate weight of evidence) — the most strongly parsimony-penalising information criterion reported there — is minimised at 5 classes**, while CAIC favours 7 and BIC 8. Reporting the **5-class** solution therefore brackets the enumeration uncertainty from the *parsimonious* side, complementing the BIC-preferred 8-class from the *rich* side; between them they span the plausible model-size range a reviewer would ask about.
+
+We re-estimate the identical measurement model with `nclass = 5` (same 13 items with item 3 excluded, same `~ sex_woman` concomitant, same lucky seed 2125 and `n.init`), reusing the notebook's own `fit_glca()`, `get_rho()`, `wsize()`, `item_type`, `label_class()` and `class_diag()` helpers so the 5-class is characterised on **exactly the same thresholds** as the 8-class. The folded `helpers-5class` chunk (above) fits `g5` and builds `fam5`/`ord5`/`ref5`/`cd5` **once**; the 5-class figure and covariate/ML three-step tables below consume those objects unchanged. The 8-class outputs are left intact.
+
+The fit line below sits alongside the 4- vs 8-class comparison; `fam5` gives the weighted size, family mean scores and data-driven label of each profile (ordered by decreasing constructive endorsement); `cd5` gives the AvePP/OCC classification diagnostics.
+
+```{r}
+#| label: sens-helpers-5class
+#| results: "hold"
+## ============================================================================
+## SHARED 5-CLASS MACHINERY -- defined ONCE, consumed by fit-5class, fig-5class,
+## table2-5class, s1-5class, s2-5class below. PASTE this chunk immediately AFTER
+## the existing `ml3step-or` chunk (i.e. under the new "# The 5-class solution
+## (AWE minimum)" heading, right after the AWE motivation paragraph). By this
+## point EVERY reused helper already exists and NOTHING above is modified:
+##   fit_glca/item_f/wsize/W       (chunk `fits`)
+##   get_post/get_rho/class_matrix/relative_entropy  (chunk `helpers`)
+##   item_type/label_class         (chunk `profile-scores`)
+##   class_diag                    (chunk `avepp-occ`)
+##   covs/wmean                    (chunk `covariate-prev`)
+## Every NEW name (g5/p5/modal5/rho5/top2_5/fam5/ord5/ref5/cd5/K5/fam_mean5/
+## item_label/ml3step_fit/ml3step_margins) is distinct from the 8-class objects
+## (g9/p9/modal9/rho9/top2/fam/ord9/cd9/Kbig/fam_mean), so the 8-class outputs
+## stay byte-for-byte intact. This chunk prints nothing (pure setup).
+## ----------------------------------------------------------------------------
+
+## (1) English item labels for the full four-category figure (ported verbatim
+##     from the MAIN analysis `item_meta`), a NAMED vector aligned to `items`.
+item_label <- c(
+  lid_des1  = "Humiliates employees",
+  lid_des2  = "Encourages creative ideas",
+  lid_des4  = "Gestures of displeasure",
+  lid_des5  = "Avoids making decisions",
+  lid_des6  = "Recognizes good performance",
+  lid_des7  = "Avoids involvement in work",
+  lid_des8  = "Spreads false information",
+  lid_des9  = "Absent when needed",
+  lid_des10 = "Berates by phone / rude email",
+  lid_des11 = "Seeks to develop capabilities",
+  lid_des12 = "Sets clear objectives",
+  lid_des13 = "Defines / explains tasks",
+  lid_des14 = "Flexible, open to innovation")
+stopifnot(identical(names(item_label), items))     # guard alignment to `items`
+
+## (2) ml3step_fit(): IDENTICAL estimator to ml3step() (same negll, same `ref`
+##     reorder to the logit baseline), but ALSO returns par/V/K/ord so a SINGLE
+##     fit feeds BOTH the odds ratios (Table S1) and the marginal predicted
+##     probabilities (Table S2). ml3step() itself is left untouched, so the
+##     8-class `ml3step-or` chunk (which expects the bare tibble) still runs.
+ml3step_fit <- function(z, post, modal, sw = NULL, ref = 1L, D = NULL) {
+  post <- as.matrix(post); K <- ncol(post)
+  if (is.null(sw)) sw <- rep(1, nrow(post))
+  if (is.null(D)) D <- class_matrix(post, modal)     # fixed D on FULL sample
+  ord <- c(ref, setdiff(seq_len(K), ref))            # ref -> baseline (reordered class 1)
+  D <- D[ord, ord]; modal <- match(modal, ord)
+  z <- as.numeric(z); ok <- !is.na(z)
+  z <- z[ok]; modal <- modal[ok]; sw <- sw[ok]; n <- length(z)
+  Dw <- t(D[, modal])
+  negll <- function(par) {
+    a <- c(0, par[seq(1, 2*(K-1), 2)]); b <- c(0, par[seq(2, 2*(K-1), 2)])
+    eta <- outer(rep(1, n), a) + outer(z, b); eta <- eta - apply(eta, 1, max)
+    pis <- exp(eta); pis <- pis / rowSums(pis)
+    -sum(sw * log(pmax(rowSums(pis * Dw), 1e-12)))
+  }
+  fit <- optim(rep(0, 2*(K-1)), negll, method = "BFGS", hessian = TRUE)
+  V <- tryCatch(solve(fit$hessian),
+                error = function(e) matrix(NA, length(fit$par), length(fit$par)))
+  bi <- seq(2, 2*(K-1), 2); b <- fit$par[bi]; se <- sqrt(diag(V))[bi]
+  ors <- tibble::tibble(class_ord = 2:K, orig_class = ord[-1],
+                        OR = exp(b), lo = exp(b - 1.96*se), hi = exp(b + 1.96*se))
+  list(par = fit$par, V = V, K = K, ord = ord, ors = ors, conv = fit$convergence)
+}
+
+## (3) ml3step_margins(): parametric-bootstrap marginal predicted probabilities
+##     P(X=t | z) at z=0 and z=1 with 95% CIs + the difference (ported from MAIN).
+##     MASS is NOT attached here -> call via MASS:: (never masks dplyr::select;
+##     MASS is a recommended package, always installed). REORDER-AWARE: column j
+##     of z0/z1/delta is REORDERED class j = ORIGINAL class m$ord[j] (column 1 =
+##     the reference). The CALLER maps a wanted original class to its column with
+##     match(orig, m$ord).
+ml3step_margins <- function(m, B = 2000) {
+  K <- m$K; par <- m$par; V <- m$V
+  draws <- MASS::mvrnorm(B, mu = par, Sigma = V)
+  probs <- function(p, z) {
+    a <- c(0, p[seq(1, 2*(K-1), 2)]); b <- c(0, p[seq(2, 2*(K-1), 2)])
+    eta <- a + z * b; e <- exp(eta - max(eta)); e / sum(e)
+  }
+  p0 <- t(apply(draws, 1, probs, z = 0))            # B x K
+  p1 <- t(apply(draws, 1, probs, z = 1))
+  q  <- function(M) apply(M, 2, quantile, c(.025, .5, .975))
+  list(z0 = q(p0), z1 = q(p1),
+       delta = apply(p1 - p0, 2, quantile, c(.025, .5, .975)))
+}
+
+## (4) Fit the 5-class model (AWE minimum). Same fitter/seed/n.init as g4/g9:
+##     fit_glca() runs in the main process (Mersenne-Twister) with the 2125->2134
+##     fallback, so it is exactly reproducible and no furrr/L'Ecuyer issue arises.
+K5 <- 5
+g5 <- fit_glca(K5)
+p5 <- get_post(g5); modal5 <- max.col(p5, ties.method = "first")
+stopifnot(length(modal5) == nrow(d_lca))
+
+## (5) Data-driven family scores + labels for the 5 profiles, built EXACTLY as the
+##     8-class `fam` (rho -> top-2 category prob -> per-type mean -> label_class).
+##     top2_5 rows kept aligned to `items` (13 rows) via item_type[rownames].
+rho5   <- get_rho(g5)
+top2_5 <- t(vapply(seq_along(items),
+                   function(j) rho5[[j]][, 3] + rho5[[j]][, 4], numeric(K5)))
+rownames(top2_5) <- items; colnames(top2_5) <- paste0("C", 1:K5)
+
+fam_mean5 <- function(type) colMeans(top2_5[item_type[rownames(top2_5)] == type, , drop = FALSE])
+fam5 <- tibble::tibble(
+  Class           = paste0("C", 1:K5),
+  size            = round(wsize(modal5, K5), 1),
+  Constructive    = round(fam_mean5("Constructive"), 2),
+  `Laissez-faire` = round(fam_mean5("Laissez-faire"), 2),
+  Destructive     = round(fam_mean5("Destructive"), 2))
+## SAME data-driven labeller as the 8-class (no hand-coded class numbers).
+fam5$Label <- mapply(label_class, fam5$Constructive, fam5$`Laissez-faire`, fam5$Destructive)
+
+## constructive -> toxic DISPLAY order + strongest-constructive reference. fam5
+## rows stay in ORIGINAL glca order (C1..C5); ord5 permutes only the DISPLAY, so
+## labels can never be mis-assigned (identical discipline to ord9/ref9).
+ord5     <- order(-fam5$Constructive, fam5$Destructive)
+ref5     <- ord5[1]
+ref_lab5 <- paste0("C", ref5)
+
+## (6) Classification diagnostics via the SAME class_diag() used for 4-/8-class.
+##     cd5 and fam5 are both in natural C1..C5 order, so the Label column aligns
+##     row-for-row (exactly as cd9$Label <- fam$Label for the 8-class).
+cd5 <- class_diag(p5, modal5)
+cd5$Label <- fam5$Label
+```
+
+```{r}
+#| label: sens-fit-5class
+#| results: "hold"
+## Compact fit line (compare with the 4- vs 8-class table above); reuses the same
+## gof slots and relative_entropy()/wsize() helpers.
+tibble::tibble(
+  Solution = "5-class (AWE minimum)",
+  logLik   = g5$gof$loglik,
+  AIC      = g5$gof$aic,
+  BIC      = g5$gof$bic,
+  Entropy  = relative_entropy(p5),
+  `Smallest class %` = min(wsize(modal5, K5))
+) |>
+  dplyr::mutate(dplyr::across(where(is.numeric), ~round(.x, 3))) |>
+  knitr::kable("markdown", caption = "5-class fit summary (AWE minimum).")
+
+## Profiles: weighted size, family scores (mean P of the top-2 categories) and
+## the data-driven label, ordered constructive -> toxic (ord5).
+fam5[ord5, ] |>
+  dplyr::rename(`*laissez-faire*` = `Laissez-faire`, Tyrannical = Destructive) |>
+  knitr::kable("markdown",
+  caption = "5-class profiles (AWE minimum): weighted size, family scores (mean P of top-2 categories) and data-driven label, ordered by decreasing constructive endorsement.")
+
+## Classification quality (AvePP > .70 good; OCC > 5 good), natural C1..C5 order
+## with the aligned data-driven labels.
+cd5 |> knitr::kable("markdown",
+  caption = "Classification diagnostics -- 5-class (AWE minimum): AvePP and OCC (with profile labels).")
+```
+
+## What do the 5 profiles look like? (full item-response probabilities)
+
+The 8-class figure above summarizes each item by its top-two-category probability (a heatmap), which is compact but hides the shape of the response distribution. For the **5-class** solution we instead reproduce the **full four-category stacked-bar style of Figure 2 of the main analysis** (`Figure2_itemprob.png`). Each horizontal bar decomposes an item's response distribution into *Never / Sometimes / Fairly often / Almost always/always* for one profile, so the 5-class measurement structure can be compared against the retained 4-class Figure 2 at full resolution. Rows are the 13 items grouped by behavior **type**; columns are the 5 profiles ordered by decreasing constructive endorsement (same `fam5`/`ord5`/`label_class` machinery as the 8-class figure, adapted to K = 5), each headed by its data-driven label and weighted size.
+
+```{r}
+#| label: sens-fig-5class
+#| fig-width: 11
+#| fig-height: 7
+#| fig-cap: "Full four-category item-response probabilities for the 5-class solution (the AWE minimum in the 13-item enumeration). Horizontal stacked bars give P(response category) for each item; rows = items grouped by behavior type; columns = profiles ordered by decreasing constructive endorsement. Same style as Figure 2 of the main analysis, so the 5-class measurement structure can be compared with the retained 4-class Figure 2."
+## Same visual grammar as MAIN Figure 2 (Figure2_itemprob.png): ALL FOUR response
+## categories stacked per item x class -- NOT the top-2 heatmap used for the
+## 8-class figure above. rho5[[j]] (from helpers-5class) is 5 x 4 (rows = class,
+## cols = category). Columns are ordered/labelled with the SAME fam5/ord5 machinery
+## as fig-9class.
+cats <- c("Never", "Sometimes", "Fairly often", "Almost always/always")
+blue <- c("#DEEBF7", "#9ECAE1", "#4292C6", "#08519C")
+
+## multi-line column headers (class + data-driven label + weighted size),
+## reordered constructive -> toxic (mirrors lab9 in fig-9class).
+lab5 <- paste0(fam5$Class, "\n", fam5$Label, "\n(", fam5$size, "%)")[ord5]
+
+rho_long <- purrr::map_dfr(seq_along(items), function(j) {
+  m <- rho5[[j]]                                      # 5 x 4
+  tidyr::expand_grid(class = 1:K5, cat = 1:4) |>
+    dplyr::mutate(p    = as.vector(t(m))[(class - 1) * 4 + cat],
+                  item = items[j])
+}) |>
+  dplyr::mutate(
+    type  = factor(item_type[item],
+                   levels = c("Destructive", "Laissez-faire", "Constructive")),
+    label = factor(item_label[item], levels = rev(item_label)),
+    cat   = factor(cats[cat], levels = cats),
+    ## levels AND labels both permuted by ord5 -> column order (constructive ->
+    ## toxic) and its printed label stay locked together (no label switching).
+    class = factor(paste0("C", class),
+                   levels = paste0("C", 1:K5)[ord5], labels = lab5))
+
+fig5 <- ggplot(rho_long, aes(p, label, fill = cat)) +
+  geom_col(width = .72) +
+  facet_grid(type ~ class, scales = "free_y", space = "free_y", switch = "y",
+             labeller = labeller(type = behavior_labeller)) +
+  scale_fill_manual(values = blue, name = "Response category") +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1),
+                     breaks = c(0, .5, 1), expand = expansion(mult = .04)) +
+  labs(x = "Response-category probability", y = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top", panel.spacing.x = unit(1, "lines"),
+        axis.text.x = element_text(size = 8),
+        plot.margin = margin(5.5, 16, 5.5, 5.5),
+        panel.grid = element_blank(), strip.placement = "outside",
+        strip.text.y.left = element_text(face = "bold", angle = 0))
+fig5
+ggsave("Figure_S_5class_itemprob.png", fig5, width = 11, height = 7, dpi = 300, bg = "white")
+```
+
+## Table 2 analog for the 5-class (AWE-minimum) solution
+
+The table below is the sensitivity-notebook counterpart of the main file's **Table 2** (survey-weighted profile characteristics), rebuilt for these 5 modal profiles. Consistent with the rest of this notebook it uses the **reduced covariate set** already cleaned here (`covs`: effort-reward imbalance, self-labeled bullying, frequent NAQ acts, sexual harassment, hazardous alcohol, absence of union, women; plus continuous age and job satisfaction) with the **simple survey weights** `W` and `wmean()`: weighted % for the binary exposures and weighted means for the continuous ones. This is intentionally the lightweight weights-only design used throughout the sensitivity file, **not** the main file's full `svydesign` / median (Q1–Q3) Table 2. Columns are ordered by decreasing constructive endorsement (`ord5`) with the data-driven `fam5` labels, so exposure patterns can be read left-to-right and compared with the 8-class table above.
+
+```{r}
+#| label: sens-table2-5class
+#| results: "hold"
+## Table 2 analog for the 5-class (AWE-minimum) solution: weighted covariate
+## characteristics by MODAL profile, columns ordered constructive -> toxic with
+## the fam5 labels. Reuses this notebook's reduced covariate set (`covs`), the
+## simple weights W and wmean() from the 8-class `covariate-prev` chunk --
+## deliberately the same lightweight design as the rest of this sensitivity
+## notebook, NOT the main file's full svydesign / median Table 2.
+
+## SINGLE-LINE headers for markdown (a "\n" would break kable): class + label +
+## weighted size, reordered constructive -> toxic. (Named hd5 to avoid reusing
+## the multi-line `lab5` built in fig-5class.)
+hd5 <- paste0(fam5$Class, " ", fam5$Label, " (", fam5$size, "%)")[ord5]
+
+## binaries -> weighted %
+prev5 <- sapply(names(covs), function(k)
+  vapply(1:K5, function(t) wmean(d_lca[[k]], modal5 == t) * 100, numeric(1)))
+rownames(prev5) <- paste0("C", 1:K5)
+prev5 <- prev5[ord5, ]                                       # constructive -> toxic
+## assign the (non-syntactic) headers AFTER as.data.frame so both sub-tables carry
+## identical column-name strings and bind_rows() aligns them cleanly.
+out5 <- as.data.frame(round(t(prev5), 1)); colnames(out5) <- hd5
+out5 <- tibble::rownames_to_column(
+  `rownames<-`(out5, unname(covs[rownames(out5)])), "Characteristic")
+
+## continuous -> weighted mean (covariate-prev style). NB: names() are the display
+## labels; the values are the column keys passed to wmean().
+cont5 <- sapply(c(`Age, mean (years)`      = "age",
+                  `Job satisfaction, mean` = "job_sat"), function(k)
+  vapply(1:K5, function(t) wmean(d_lca[[k]], modal5 == t), numeric(1)))
+cont5 <- round(t(cont5[ord5, ]), 1)
+out5b <- as.data.frame(cont5); colnames(out5b) <- hd5
+out5b <- tibble::rownames_to_column(out5b, "Characteristic")
+
+dplyr::bind_rows(out5, out5b) |>
+  knitr::kable("markdown",
+    caption = paste0("Table 2 (5-class analog). Weighted covariate characteristics by ",
+                     "modal leadership profile (binaries: weighted %; continuous: weighted ",
+                     "mean), ordered by decreasing constructive endorsement. Notebook reduced covariate set ",
+                     "+ simple weights (cf. main-file survey-design Table 2)."))
+```
+
+## Table S1 analog (5-class) — ML three-step odds ratios
+
+Odds of membership in each 5-class profile **versus the strongest-constructive reference** (`ref5 = ord5[1]`), one covariate at a time, from `ml3step_fit()` — the same estimator as `ml3step()`, only additionally returning `par/V/K/ord` so the **same fits also feed Table S2** below. The full 7-covariate set is used (as in the main file's Table S1). OR > 1 = higher exposure odds than the healthiest profile; CIs widen for the smallest profiles, so read directionally.
+
+```{r}
+#| label: sens-s1-5class
+#| results: "hold"
+#| cache: false
+## Reference = strongest-constructive class (ord5[1]); one covariate at a time.
+## ml3step_fit() returns BOTH $ors AND par/V/K/ord, so the SAME fitted models feed
+## Table S2 (margins) below -- fit once, use twice. Full 7-covariate set (as MAIN).
+exps5 <- c("eri", "bully_self", "naq_frequent", "auditc_hazard", "no_union",
+           "sex_harass", "sex_woman")
+ml_models5 <- lapply(exps5, function(k)
+  tryCatch(ml3step_fit(d_lca[[k]], p5, modal5, sw = W, ref = ref5),
+           error = function(e) NULL))
+names(ml_models5) <- exps5
+
+## $ors$orig_class is the ORIGINAL class index -> fam5 labels align directly.
+## Display constructive -> toxic via a Profile factor ordered by ord5 (the
+## reference ord5[1] never appears among the non-baseline OR rows).
+prof_lev5 <- paste0("C", ord5, " ", fam5$Label[ord5])
+or_tab5 <- purrr::imap_dfr(ml_models5, function(m, k) {
+  if (is.null(m)) return(NULL)
+  dplyr::mutate(m$ors,
+                Exposure = unname(covs[k]),
+                Profile  = paste0("C", orig_class, " ", fam5$Label[orig_class]))
+})
+or_tab5 |>
+  dplyr::mutate(Exposure = factor(Exposure, levels = unname(covs[exps5])),
+                Profile  = factor(Profile,  levels = prof_lev5)) |>
+  dplyr::arrange(Exposure, Profile) |>
+  dplyr::transmute(Exposure, Profile,
+                   `OR vs ref (95% CI)` = sprintf("%.2f (%.2f-%.2f)", OR, lo, hi)) |>
+  knitr::kable("markdown",
+    caption = paste0("Table S1 analog (5-class): ML three-step odds ratios, reference = ",
+                     ref_lab5, " ", fam5$Label[ref5],
+                     " (strongest constructive). OR>1 = higher exposure odds than the constructive baseline."))
+```
+
+## Table S2 analog (5-class) — marginal predicted probabilities
+
+Predicted P(profile | covariate) at *No* (z = 0) and *Yes* (z = 1) with parametric-bootstrap 95% CIs and the difference Δ (pp), from the **same** `ml_models5` fits used for Table S1. Because `ml3step_fit()` reorders classes so the reference is the logit baseline, each margins column is remapped to its `fam5` label via `match(orig_class, m$ord)` before display (decreasing constructive endorsement). The lucky seed 2125 fixes the `MASS::mvrnorm` draws so the CIs are reproducible.
+
+```{r}
+#| label: sens-s2-5class
+#| results: "hold"
+## Marginal predicted probabilities P(profile | z) at z=0 (No) vs z=1 (Yes), with
+## parametric-bootstrap 95% CIs and the difference (pp), from the SAME ml_models5
+## fits. Lucky seed 2125 for the mvrnorm draws -> reproducible CIs.
+set.seed(2125)
+## fam5 labels are indexed by ORIGINAL class; margins columns are REORDERED, so map
+## each displayed class back to its column with match(orig_class, m$ord).
+mg_lab5 <- paste0(fam5$Class, " ", fam5$Label)
+s2_5 <- purrr::imap_dfr(ml_models5, function(m, k) {
+  if (is.null(m)) return(NULL)
+  mg <- ml3step_margins(m)                    # cols j of z0/z1/delta -> orig class m$ord[j]
+  purrr::map_dfr(seq_along(ord5), function(pos) {
+    c_orig <- ord5[pos]                       # original class to show (constructive -> toxic)
+    j      <- match(c_orig, m$ord)            # its column in the margins matrices
+    tibble::tibble(
+      Covariate = ifelse(pos == 1, unname(covs[k]), ""),
+      Profile   = mg_lab5[c_orig],
+      `No (z=0), % (95% CI)`  = sprintf("%.1f (%.1f-%.1f)", 100*mg$z0[2, j], 100*mg$z0[1, j], 100*mg$z0[3, j]),
+      `Yes (z=1), % (95% CI)` = sprintf("%.1f (%.1f-%.1f)", 100*mg$z1[2, j], 100*mg$z1[1, j], 100*mg$z1[3, j]),
+      `Delta (pp)`            = sprintf("%+.1f", 100*mg$delta[2, j]))
+  })
+})
+s2_5 |> knitr::kable("markdown",
+  caption = paste0("Table S2 analog (5-class): marginal predicted probabilities at z=0 (No) vs z=1 (Yes), ",
+                   "with the difference (pp). Profiles ordered by decreasing constructive endorsement; logit baseline = ",
+                   ref_lab5, "."))
+```
+
+# Verdict — is the 8-class a reasonable sensitivity analysis?
+
+```{r}
+#| label: sens-verdict
+#| echo: false
+#| results: asis
+ari <- function(a, b) {                  # adjusted Rand index (4 vs 8 agreement)
+  tab <- table(a, b); n <- sum(tab)
+  s_ij <- sum(choose(tab, 2)); a_i <- sum(choose(rowSums(tab), 2))
+  b_j <- sum(choose(colSums(tab), 2)); exp <- a_i*b_j/choose(n,2)
+  (s_ij - exp) / ((a_i + b_j)/2 - exp)
+}
+cat(sprintf("- Entropy stays high (8-class = %.3f vs 4-class = %.3f): clean separation is preserved.\n",
+            relative_entropy(p9), relative_entropy(p4)))
+cat(sprintf("- Smallest 8-class profile = %.1f%% (n = %d): small but estimable.\n",
+            min(wsize(modal9, Kbig)), min(table(modal9))))
+cat(sprintf("- Adjusted Rand index (4 vs 8 modal partitions) = %.2f (0 = unrelated, 1 = identical): the 8-class partition **moderately overlaps** the 4 — consistent with the 8 classes being *splits/refinements* of the 4 (see the cross-tab), not an unrelated re-arrangement.\n",
+            ari(modal4, modal9)))
+```
+
+**Reasonable? Yes, and well-motivated**, because the information criteria favour a much larger solution than 4 (BIC is minimised at 8, CAIC at 7), so reporting the 8-class model pre-empts the obvious reviewer question about why 4 was retained. The 8-class solution **refines** the 4 (the constructive profile reappears as two near-duplicate classes; a four-way disengagement gradient; the ambivalent profile persists) rather than overturning them, entropy is preserved, and the **covariate gradient replicates**, suggesting that the 4-class substantive conclusions are
+robust to enumeration uncertainty.
+
+**Two honest caveats.** (1) Much of the extra structure is *redundant* (near-duplicate constructive classes; several flavours of disengagement that differ by degree, not kind), which is why 4 remains the more parsimonious, communicable choice for the main model and why the BIC gain of the 8-class over the adjacent 7-class is marginal (~20 points). (2) This tests sensitivity to **enumeration**, a different axis from the **classification-error** (naive-vs-BCH) sensitivity in the main file's Table S3; report both, as they answer different questions. The one genuinely new substantive signal is a small profile with **elevated tyrannical and avoidant behaviors** (3.4%, n = 65) that the 4-class model does not isolate: it is absorbed into a broader 4-class profile (~78%) and concentrates the adverse exposures (the highest prevalence of effort-reward imbalance, self-labeled bullying, frequent negative acts and sexual harassment of any profile).
+
+```{r}
+#| label: sens-session
+sessionInfo()
+```
+
+# Guardar la sensibilidad y exportar lo que antes quedaba sólo en HTML
+
+```{r}
+#| label: checkpoint-sensibilidad
+sensitivity_models <- list(k4 = g4, k5 = g5, k8 = g9)
+sensitivity_k <- c(4L, 5L, 8L)
+fit_match <- data.frame(
+  classes = sensitivity_k,
+  logLik = vapply(sensitivity_models, function(model) model$gof$loglik, numeric(1)),
+  expected_logLik = general$fit_tbl$logLik[match(sensitivity_k, general$fit_tbl$Classes)])
+stopifnot(all(is.finite(fit_match$logLik)),
+          all(abs(fit_match$logLik - fit_match$expected_logLik) < 1e-3))
+print(fit_match)
+sensibilidad <- list(
+  status = "measurement_complete_figures_pending",
+  fits = sensitivity_models,
+  tables = list(profiles8 = fam, profiles5 = fam5,
+                diagnostics8 = cd9, diagnostics5 = cd5,
+                covariates8 = dplyr::bind_rows(out, out2),
+                covariates5 = dplyr::bind_rows(out5, out5b),
+                or8 = or_tab, or5 = or_tab5, margins5 = s2_5,
+                crosswalk4_8 = as.data.frame(ct)),
+  analysis_data = d_lca, items = items, input_hash = input_hash,
+  code_hash = code_hash, n_init = n_init, seed = 2125L,
+  reference8 = ref9, reference5 = ref5, ml_models5 = ml_models5,
+  source_general_hash = digest::digest(file = "01_general.RData", algo = "sha256"),
+  session = capture.output(sessionInfo()))
+save(sensibilidad, file = "04_sensibilidad.RData", compress = "xz")
+readr::write_csv(fam, "sensibilidad_perfiles8.csv")
+readr::write_csv(fam5, "sensibilidad_perfiles5.csv")
+readr::write_csv(sensibilidad$tables$covariates8, "sensibilidad_covariables8.csv")
+readr::write_csv(sensibilidad$tables$covariates5, "sensibilidad_covariables5.csv")
+readr::write_csv(or_tab, "sensibilidad_or8.csv")
+readr::write_csv(or_tab5, "sensibilidad_or5.csv")
+available_fits[c("4", "5", "8")] <- unname(sensitivity_models)
+```
+
+# Figuras de publicación
+
+# 0. Packages, helpers, item metadata
+
+```{r}
+#| label: pub-setup
+#| results: "hold"
+
+for (.pkg in c("ggplot2", "dplyr", "tidyr", "tibble", "readr", "knitr", "patchwork")) {
+  if (!requireNamespace(.pkg, quietly = TRUE))
+    stop("Missing required R package: ", .pkg)
+  suppressPackageStartupMessages(library(.pkg, character.only = TRUE))
+}
+stopifnot(exists("ggplot"), exists("theme_bw"))
+
+## ---- Journal geometry and theme --------------------------------------------
+W_MM   <- 174      # Springer two-column width
+DPI    <- 600      # combination art
+BASE   <- 8.5      # pt; Springer asks for 8 to 12 pt lettering
+FAM    <- "sans"   # maps to Arial/Helvetica on Windows and macOS
+
+theme_j <- function(base_size = BASE) {
+  theme_bw(base_size = base_size, base_family = FAM) +
+    theme(panel.grid.minor   = element_blank(),
+          panel.grid.major.y = element_blank(),
+          panel.grid.major.x = element_line(linewidth = .25, colour = "grey88"),
+          strip.background   = element_rect(fill = "grey95", colour = NA),
+          strip.text         = element_text(face = "bold", size = base_size - 0.5),
+          legend.position    = "top",
+          ## Left-aligned rather than centred: with long category or setting
+          ## labels a centred legend overflows the panel area on both sides and
+          ## the outer entries are clipped.
+          legend.justification = "left",
+          legend.box.just    = "left",
+          legend.margin      = margin(t = 0, r = 0, b = 2, l = 0),
+          legend.title       = element_text(size = base_size - 0.5),
+          legend.text        = element_text(size = base_size - 0.5),
+          legend.key.height  = grid::unit(.7, "lines"),
+          legend.key.width   = grid::unit(.9, "lines"),
+          plot.title         = element_blank(),   # no title inside the figure
+          plot.tag           = element_text(face = "bold", size = base_size + 1.5))
+}
+
+save_fig <- function(p, stem, h_mm) {
+  ggsave(paste0(stem, ".png"), p, width = W_MM, height = h_mm, units = "mm",
+         dpi = DPI, bg = "white")
+  try(ggsave(paste0(stem, ".tiff"), p, width = W_MM, height = h_mm, units = "mm",
+             dpi = DPI, bg = "white", compression = "lzw"), silent = TRUE)
+  try(ggsave(paste0(stem, ".pdf"), p, width = W_MM, height = h_mm, units = "mm",
+             device = grDevices::cairo_pdf), silent = TRUE)
+  try(ggsave(paste0(stem, ".eps"), p, width = W_MM, height = h_mm, units = "mm",
+             device = grDevices::cairo_ps, fallback_resolution = DPI), silent = TRUE)
+  message("Wrote ", stem, ".png (+ vector/TIFF copies where the device allowed it)")
+}
+
+## ---- Item metadata (13 items; lid_des3 / p39_3 excluded) --------------------
+## Order must match the order the models were fitted in. The stopifnot below
+## turns a mismatch into a loud error instead of a silent off-by-one mislabel.
+ITEM_LAB <- c("Humiliates employees", "Encourages creative ideas",
+              "Gestures of displeasure", "Avoids making decisions",
+              "Recognizes good performance", "Avoids involvement in work",
+              "Spreads false information", "Absent when needed",
+              "Berates by phone / rude email", "Seeks to develop capabilities",
+              "Sets clear objectives", "Defines / explains tasks",
+              "Flexible, open to innovation")
+ITEM_TYPE <- factor(c("Destructive", "Constructive", "Destructive", "Laissez-faire",
+                      "Constructive", "Laissez-faire", "Destructive", "Laissez-faire",
+                      "Destructive", "Constructive", "Constructive", "Constructive",
+                      "Constructive"),
+                    levels = c("Destructive", "Laissez-faire", "Constructive"))
+stopifnot(length(ITEM_LAB) == 13L, length(ITEM_TYPE) == 13L)
+
+CATS    <- c("Never", "Sometimes", "Fairly often", "Almost always/always")
+## Sequential single-hue ramp: monotone in luminance, so it also reads in greyscale.
+CAT_PAL <- setNames(c("#EFF3FF", "#9ECAE1", "#4292C6", "#08519C"), CATS)
+
+## Strip labels for the class facets. label_wrap_gen() breaks only at spaces, so
+## "C4 Ambivalent/intermittently destructive" became "C4" plus an over-long
+## second line. Break immediately AFTER the slash first, then wrap what remains.
+wrap_class <- function(x) {
+  x <- sub("/", "/\n", x, fixed = TRUE)
+  vapply(strsplit(x, "\n", fixed = TRUE), function(parts)
+    paste(vapply(parts, function(p) paste(strwrap(p, width = 16), collapse = "\n"),
+                 character(1)), collapse = "\n"),
+    character(1), USE.NAMES = FALSE)
+}
+
+## ---- glca accessors ---------------------------------------------------------
+get_post_list <- function(g) {
+  p <- g$posterior
+  if (is.matrix(p) || is.data.frame(p)) list(as.matrix(p)) else lapply(p, as.matrix)
+}
+get_rho <- function(g, group = 1L) {
+  r <- g$param$rho
+  if (is.list(r) && is.list(r[[1]])) r <- r[[group]]
+  r
+}
+## Top-2 endorsement (categories 3 + 4) per item x class, from a rho list.
+top2_mat <- function(rho, K) {
+  m <- t(vapply(seq_along(rho), function(j) {
+    mm <- as.matrix(rho[[j]]); mm <- mm / rowSums(mm)
+    mm[, 3] + mm[, 4]
+  }, numeric(K)))
+  rownames(m) <- ITEM_LAB; colnames(m) <- paste0("raw", seq_len(K))
+  m
+}
+group_prev <- function(g, group_levels) {
+  pl <- get_post_list(g)
+  m  <- t(vapply(pl, colMeans, numeric(ncol(pl[[1]]))))
+  nm <- names(pl)
+  rownames(m) <- if (!is.null(nm) && all(nzchar(nm)) && length(nm) == nrow(m)) nm
+                 else if (length(group_levels) == nrow(m)) group_levels
+                 else paste0("G", seq_len(nrow(m)))
+  colnames(m) <- paste0("raw", seq_len(ncol(m)))
+  m
+}
+
+## ---- Canonical manuscript numbering ----------------------------------------
+## Identical rule to canonical_class_numbering.R, inlined so this file stands alone.
+##   C4 = highest (destructive + laissez-faire)
+##   C2 = lowest constructive among the remaining three
+##   C3 = highest constructive among the remaining two
+##   C1 = the last one
+MS_LAB <- c("Moderately constructive", "Disengaged", "Constructive",
+            "Ambivalent")
+
+ms_map <- function(rho_list) {
+  K   <- nrow(as.matrix(rho_list[[1]]))
+  t2  <- top2_mat(rho_list, K)
+  con <- colMeans(t2[ITEM_TYPE == "Constructive",  , drop = FALSE])
+  lf  <- colMeans(t2[ITEM_TYPE == "Laissez-faire", , drop = FALSE])
+  de  <- colMeans(t2[ITEM_TYPE == "Destructive",   , drop = FALSE])
+  stopifnot(K == 4L)
+  num <- integer(K)
+  i4 <- which.max(de + lf);                num[i4] <- 4L
+  r1 <- setdiff(seq_len(K), i4)
+  i2 <- r1[which.min(con[r1])];            num[i2] <- 2L
+  r2 <- setdiff(r1, i2)
+  i3 <- r2[which.max(con[r2])];            num[i3] <- 3L
+  i1 <- setdiff(r2, i3);                   num[i1] <- 1L
+  stopifnot(!anyDuplicated(num), identical(sort(num), 1:4))
+  if (!(con[i3] > con[i1] && con[i1] > con[i2]))
+    warning("Constructive ordering is not C3 > C1 > C2; inspect the signature table.")
+  list(num = num, lab = MS_LAB[num],
+       tag = paste0("C", num, " ", MS_LAB[num]),
+       order = order(num),
+       signature = data.frame(raw = seq_len(K), manuscript = paste0("C", num),
+                              label = MS_LAB[num],
+                              constructive = round(100 * con), laissez_faire = round(100 * lf),
+                              destructive = round(100 * de), row.names = NULL))
+}
+```
+
+# 1. Load the saved objects
+
+```{r}
+#| label: pub-load-objects
+lca <- general
+stopifnot(identical(load("02_hospital.RData", envir = checkpoint_env), "hospital"))
+hospital <- checkpoint_env$hospital
+stopifnot(hospital$n_init == 4000L, hospital$seed == 2125L)
+g4_inv <- hospital$g4_inv
+HAVE_MG <- TRUE
+map1 <- ms_map(lca$rho4)
+rho_inv <- get_rho(g4_inv)
+mapM <- ms_map(rho_inv)
+print(dplyr::rename(map1$signature, Constructive = constructive,
+                    `laissez-faire` = laissez_faire, Tyrannical = destructive), row.names = FALSE)
+print(dplyr::rename(mapM$signature, Constructive = constructive,
+                    `laissez-faire` = laissez_faire, Tyrannical = destructive), row.names = FALSE)
+```
+
+# 2. Verification: same order, same percentages
+
+The values below are the ones reported in the manuscript. If any of them moved,
+the render stops here rather than producing a figure that disagrees with its table.
+
+```{r}
+#| label: pub-verify
+stopifnot(identical(as.integer(map1$num), 1:4),
+          nrow(lca$post4) == length(lca$modal4),
+          all(abs(rowSums(lca$post4) - 1) < 1e-8))
+print(lca$table2$class_sizes)
+GL <- hospital$group_levels
+prev_ms <- 100 * group_prev(g4_inv, GL)[, mapM$order, drop = FALSE]
+colnames(prev_ms) <- paste0("C", 1:4)
+stopifnot(all(abs(rowSums(prev_ms) - 100) < 1e-8))
+print(round(prev_ms, 3))
+group_sizes <- vapply(get_post_list(g4_inv), nrow, integer(1))
+```
+
+# 3. Figure 1 — class enumeration with adjacent-solution ARI
+
+```{r}
+#| label: pub-fig1
+#| fig-width: 6.85
+#| fig-height: 5.9
+#| results: "hold"
+
+## Per-k modal assignments: exported by Part 1, or written by
+## refit_enumeration_modal.R, or restored from a knitr cache of Part 1's
+## `enumeration` chunk. Every source is validated against Table 1's
+## log-likelihoods before use. If table1_enumeration_ari.csv already exists it is
+## reused, since it was produced by exactly this validation.
+fit_tbl  <- as.data.frame(lca$fit_tbl)
+fit_tbl  <- fit_tbl[order(fit_tbl$Classes), ]
+ks       <- as.integer(fit_tbl$Classes)
+retained <- if (!is.null(lca$retained)) as.integer(lca$retained) else 4L
+ll_rep   <- fit_tbl$logLik[match(ks, fit_tbl$Classes)]
+
+gof_ll <- function(g) { gg <- g$gof; v <- gg[["loglik"]]
+  if (is.null(v)) v <- gg[["logLik"]]; if (is.null(v)) NA_real_ else as.numeric(v)[1] }
+post_of <- function(g) { p <- g$posterior; if (is.list(p)) p <- p[[1]]; as.matrix(p) }
+
+ari <- function(a, b) {
+  tab <- table(a, b); n <- sum(tab); ch2 <- function(x) x * (x - 1) / 2
+  sij <- sum(ch2(tab)); sa <- sum(ch2(rowSums(tab))); sb <- sum(ch2(colSums(tab)))
+  ex <- sa * sb / ch2(n); mx <- (sa + sb) / 2
+  if (isTRUE(all.equal(mx, ex))) 1 else (sij - ex) / (mx - ex)
+}
+purity <- function(prev, cur) { t <- table(cur, prev); sum(apply(t, 1, max)) / sum(t) }
+
+enumeration_fits <- setNames(lapply(ks, fit_glca), as.character(ks))
+enumeration_loglik <- vapply(enumeration_fits, gof_ll, numeric(1))
+stopifnot(all(is.finite(enumeration_loglik)),
+          all(abs(enumeration_loglik - ll_rep) < 1e-3))
+modal_all <- setNames(lapply(enumeration_fits, function(model) {
+  posterior <- post_of(model)
+  stopifnot(nrow(posterior) == nrow(d_lca))
+  max.col(posterior, ties.method = "first")
+}), paste0("k", ks))
+enum_tbl <- fit_tbl |>
+  dplyr::mutate(
+    ari_prev = vapply(Classes, function(k) if (k == min(ks)) NA_real_ else
+      ari(modal_all[[paste0("k", k - 1L)]], modal_all[[paste0("k", k)]]), numeric(1)),
+    purity_prev = vapply(Classes, function(k) if (k == min(ks)) NA_real_ else
+      purity(modal_all[[paste0("k", k - 1L)]], modal_all[[paste0("k", k)]]), numeric(1)))
+readr::write_csv(enum_tbl, "table1_enumeration_ari.csv")
+sensibilidad$enumeration_fits <- enumeration_fits
+sensibilidad$enumeration <- enum_tbl
+save(sensibilidad, file = "04_sensibilidad.RData", compress = "xz")
+
+share_tbl <- enum_tbl |>
+  dplyr::select(Classes, AIC, BIC, CAIC, SABIC, AWE) |>
+  tidyr::pivot_longer(-Classes, names_to = "Criterion", values_to = "value") |>
+  dplyr::group_by(Criterion) |>
+  dplyr::mutate(share = 100 * (value[Classes == min(Classes)] - value) /
+                        (value[Classes == min(Classes)] - min(value)),
+                k_min = Classes[which.min(value)]) |>
+  dplyr::ungroup() |>
+  dplyr::mutate(Criterion = factor(Criterion, levels = c("AIC", "BIC", "CAIC", "SABIC", "AWE")))
+
+okabe  <- c(AIC = "#0072B2", BIC = "#D55E00", CAIC = "#CC79A7", SABIC = "#009E73", AWE = "#000000")
+shapes <- c(AIC = 16, BIC = 17, CAIC = 15, SABIC = 18, AWE = 4)
+ltys   <- c(AIC = "solid", BIC = "solid", CAIC = "dashed", SABIC = "dotted", AWE = "longdash")
+band   <- annotate("rect", xmin = retained - .5, xmax = retained + .5,
+                   ymin = -Inf, ymax = Inf, fill = "grey88", alpha = .6)
+th1 <- theme_j() + theme(panel.grid.major.x = element_blank(),
+                         panel.grid.major.y = element_line(linewidth = .25, colour = "grey88"),
+                         legend.title = element_blank())
+
+p1a <- ggplot(share_tbl, aes(Classes, share, colour = Criterion, shape = Criterion,
+                             linetype = Criterion)) +
+  band + geom_line(linewidth = .5) + geom_point(size = 1.7) +
+  geom_point(data = dplyr::filter(share_tbl, Classes == k_min), shape = 21, size = 3.6,
+             stroke = .6, colour = "grey20", show.legend = FALSE) +
+  scale_colour_manual(values = okabe) + scale_shape_manual(values = shapes) +
+  scale_linetype_manual(values = ltys) +
+  scale_x_continuous(breaks = ks) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 25)) +
+  labs(x = "Number of latent classes", y = "Share of total decrease (%)") + th1
+
+d1 <- tibble::tibble(Classes = enum_tbl$Classes,
+                     `Relative entropy` = enum_tbl$Entropy,
+                     AvePP = enum_tbl$`Mean AvePP`,
+                     ARI = enum_tbl$ari_prev) |>
+  tidyr::pivot_longer(-Classes, names_to = "Metric", values_to = "value") |>
+  dplyr::filter(!is.na(value)) |>
+  dplyr::mutate(Metric = factor(Metric, levels = c("Relative entropy", "AvePP", "ARI")))
+
+p1b <- ggplot(d1, aes(Classes, value, colour = Metric, shape = Metric, linetype = Metric)) +
+  band + geom_line(linewidth = .5) + geom_point(size = 1.7) +
+  scale_colour_manual(values = c("#0072B2", "#009E73", "#D55E00")) +
+  scale_shape_manual(values = c(16, 15, 17)) +
+  scale_linetype_manual(values = c("solid", "dashed", "solid")) +
+  scale_x_continuous(breaks = ks, limits = range(ks) + c(-.5, .5)) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, .2)) +
+  labs(x = "Number of latent classes", y = "Index (0 to 1)") + th1
+
+p1c <- ggplot(enum_tbl, aes(Classes, `Smallest %`)) +
+  band + geom_col(width = .6, fill = "grey55") +
+  geom_hline(yintercept = 5, linetype = "dashed", colour = "grey30") +
+  scale_x_continuous(breaks = ks) +
+  labs(x = "Number of latent classes", y = "Smallest class (% of classified sample)") + th1
+
+fig1 <- p1a / (p1b | p1c) + patchwork::plot_layout(heights = c(1.2, 1)) +
+  patchwork::plot_annotation(tag_levels = "a")
+fig1
+save_fig(fig1, "Fig1_enumeration", 150)
+```
+
+# 4. Figure 2 — item-response probabilities, retained four-class solution
+
+```{r}
+#| label: pub-fig2
+#| fig-width: 6.85
+#| fig-height: 6.3
+#| results: "hold"
+
+## Long form from the fitted rho: rows = raw class, cols = response category.
+## The raw index is translated to the manuscript class here and nowhere else.
+rho_long <- function(rho_list, map) {
+  do.call(rbind, lapply(seq_along(rho_list), function(j) {
+    m <- as.matrix(rho_list[[j]]); m <- m / rowSums(m)
+    data.frame(
+      item     = factor(ITEM_LAB[j], levels = rev(ITEM_LAB)),
+      type     = ITEM_TYPE[j],
+      class    = factor(rep(map$tag, times = ncol(m)), levels = map$tag[map$order]),
+      category = factor(rep(CATS, each = nrow(m)), levels = CATS),
+      prob     = as.vector(m))
+  }))
+}
+
+d2 <- rho_long(lca$rho4, map1)
+stopifnot(identical(levels(d2$class), map1$tag[map1$order]))   # C1 -> C4 order locked
+
+fig2 <- ggplot(d2, aes(prob, item, fill = category)) +
+  geom_col(width = .8, colour = "white", linewidth = .15,
+           position = position_stack(reverse = TRUE)) +
+  facet_grid(type ~ class, scales = "free_y", space = "free_y", switch = "y",
+             labeller = labeller(type = behavior_labeller, class = as_labeller(wrap_class))) +
+  scale_fill_manual(values = CAT_PAL, name = "Response",
+                    guide = guide_legend(nrow = 1)) +
+  scale_x_continuous(breaks = c(0, .5, 1), labels = c("0", "50", "100"),
+                     expand = expansion(mult = .03)) +
+  labs(x = "Response-category probability (%)", y = NULL) +
+  theme_j() +
+  theme(strip.placement = "outside",
+        strip.text.y.left = element_text(angle = 0, face = "bold"),
+        panel.spacing.x = grid::unit(.5, "lines"),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_text(size = BASE - 1))
+fig2
+save_fig(fig2, "Fig2_itemprob", 165)
+```
+
+# 5. Figure 3 — shared item-response probabilities under invariance
+
+Under `measure.inv = TRUE` a single set of item-response probabilities describes
+both settings, so the honest display is one panel set of shared classes, with the
+setting difference carried entirely by Figure 4. The per-setting solutions fitted
+separately are a supporting check; they cannot be redrawn here because those two
+single-group fits are not saved by any notebook (see the note at the end).
+
+```{r}
+#| label: pub-fig3
+#| fig-width: 6.85
+#| fig-height: 6.3
+#| results: "hold"
+
+if (!HAVE_MG) {
+  message("Figure 3 skipped: no invariant multiple-group fit available.")
+} else {
+  d3 <- rho_long(rho_inv, mapM)
+  stopifnot(identical(levels(d3$class), mapM$tag[mapM$order]))
+
+  fig3 <- ggplot(d3, aes(prob, item, fill = category)) +
+    geom_col(width = .8, colour = "white", linewidth = .15,
+             position = position_stack(reverse = TRUE)) +
+    facet_grid(type ~ class, scales = "free_y", space = "free_y", switch = "y",
+               labeller = labeller(type = behavior_labeller, class = as_labeller(wrap_class))) +
+    scale_fill_manual(values = CAT_PAL, name = "Response",
+                      guide = guide_legend(nrow = 1)) +
+    scale_x_continuous(breaks = c(0, .5, 1), labels = c("0", "50", "100"),
+                       expand = expansion(mult = .03)) +
+    labs(x = "Response-category probability (%)", y = NULL) +
+    theme_j() +
+    theme(strip.placement = "outside",
+          strip.text.y.left = element_text(angle = 0, face = "bold"),
+          panel.spacing.x = grid::unit(.5, "lines"),
+          axis.ticks.y = element_blank(),
+          axis.text.y = element_text(size = BASE - 1))
+  print(fig3)
+  save_fig(fig3, "Fig3_invariant_profiles", 165)
+}
+```
+
+# 6. Figure 4 — class prevalence by setting
+
+```{r}
+#| label: pub-fig4
+#| fig-width: 6.85
+#| fig-height: 3.5
+#| results: "hold"
+
+if (!HAVE_MG) {
+  message("Figure 4 skipped: no invariant multiple-group fit available.")
+} else {
+  d4 <- as.data.frame(prev_ms) |>
+    tibble::rownames_to_column("Setting") |>
+    tidyr::pivot_longer(-Setting, names_to = "Class", values_to = "Prevalence") |>
+    dplyr::mutate(
+      Class = factor(Class, levels = paste0("C", 1:4),
+                     labels = paste0("C", 1:4, "\n", MS_LAB)),
+      Setting = factor(Setting, levels = c("General salaried", "Hospital HCW"),
+                       labels = paste0(c("General salaried workers (n= ", "Hospital healthcare workers (n= "),
+                                       format(group_sizes, big.mark = ",", trim = TRUE), ")")))
+
+  fig4 <- ggplot(d4, aes(Class, Prevalence, fill = Setting)) +
+    geom_col(position = position_dodge(width = .78), width = .68,
+             colour = "grey25", linewidth = .25) +
+    geom_text(aes(label = sprintf("%.1f", Prevalence)),
+              position = position_dodge(width = .78), vjust = -0.45,
+              size = (BASE - 1.5) / .pt, family = FAM) +
+    ## Dark blue vs light amber: the pair differs in hue AND in luminance, so the
+    ## bars stay distinguishable in greyscale; the printed values make it explicit.
+    scale_fill_manual(values = c("#0072B2", "#E69F00")) +
+    scale_y_continuous(limits = c(0, max(d4$Prevalence) * 1.18),
+                       expand = expansion(mult = c(0, .02))) +
+    labs(x = NULL, y = "Prevalence (%)", fill = NULL) +
+    theme_j() +
+    theme(panel.grid.major.x = element_blank(),
+          panel.grid.major.y = element_line(linewidth = .25, colour = "grey88"),
+          axis.text.x = element_text(size = BASE - 0.5, lineheight = 1.05))
+  print(fig4)
+  save_fig(fig4, "Fig4_prevalences", 95)
+}
+```
+
+# 7. Captions (Springer format: bold "Fig. N", no terminal punctuation)
+
+```{r}
+#| label: pub-captions
+#| echo: false
+#| results: "asis"
+
+caption_text <- "
+**Fig. 1** Class-enumeration diagnostics for two- to ten-class solutions of the 13 leadership items
+
+Note. AIC= Akaike information criterion; BIC= Bayesian information criterion; CAIC= consistent AIC; SABIC= sample-size-adjusted BIC; AWE= approximate weight of evidence. a) Share of the total decrease in each information criterion, from the two-class solution to the criterion's own minimum, attained by each solution (open circles mark each minimum: AIC, SABIC at ten classes, BIC at eight, CAIC at seven, AWE at five). b) Relative entropy, mean average posterior probability of modal assignment (AvePP), and adjusted Rand index (ARI) between each solution and the preceding one. c) Size of the smallest class as a percentage of the classified sample; dashed line at 5%. Shaded band, retained four-class solution.
+
+**Fig. 2** Item-response probabilities of the retained four-class solution among Chilean salaried workers (n= {GENERAL_N}). Each horizontal bar gives, for one leadership item within one class, the model-estimated probability of the four response categories. Rows group the items by behavior type (tyrannical, *laissez-faire*, constructive); columns are the four classes in manuscript order. *C1* moderately constructive, *C2* disengaged, *C3* constructive, *C4* ambivalent
+
+**Fig. 3** Shared item-response probabilities of the four classes under the measurement-invariant multiple-group model (pooled n= {POOLED_N}). Because item-response probabilities are constrained to be equal across settings, one set of profiles describes both general salaried and hospital healthcare workers, and only class prevalence differs between them (Fig. 4). Layout as in Fig. 2
+
+**Fig. 4** Model-estimated prevalence of the four shared leadership classes among general salaried workers (n= {MG_GENERAL_N}) and hospital healthcare workers (n= {HOSPITAL_N}) under the measurement-invariant multiple-group model. Prevalences sum to 100% within each setting. Estimates are unweighted; the hospital sample is a non-probability sample of three public hospitals. *C1* moderately constructive, *C2* disengaged, *C3* constructive, *C4* ambivalent
+"
+caption_text <- gsub("{GENERAL_N}", format(lca$n, big.mark = ",", trim = TRUE), caption_text, fixed = TRUE)
+caption_text <- gsub("{POOLED_N}", format(sum(group_sizes), big.mark = ",", trim = TRUE), caption_text, fixed = TRUE)
+caption_text <- gsub("{MG_GENERAL_N}", format(group_sizes[1], big.mark = ",", trim = TRUE), caption_text, fixed = TRUE)
+caption_text <- gsub("{HOSPITAL_N}", format(group_sizes[2], big.mark = ",", trim = TRUE), caption_text, fixed = TRUE)
+cat(caption_text)
+
+```
+
+# 8. What was regenerated, and what still needs a decision
+
+```{r}
+#| label: pub-session
+#| results: "hold"
+
+cat("Files written to ", normalizePath("."), ":\n", sep = "")
+print(list.files(".", "^Fig[1-4]_.*\\.(png|tiff|pdf|eps)$"))
+cat("\n")
+sessionInfo()
+```
+
+
+# Cerrar el punto de control
+
+```{r}
+#| label: checkpoint-completo
+sensibilidad$figure_files <- c("Fig1_enumeration.png", "Fig2_itemprob.png",
+                              "Fig3_invariant_profiles.png", "Fig4_prevalences.png",
+                              "Figure_S_5class_itemprob.png", "Figure_S_8class_itemprob.png")
+stopifnot(all(file.exists(sensibilidad$figure_files)))
+sensibilidad$status <- "complete"
+sensibilidad$hospital_hash <- digest::digest(file = "02_hospital.RData", algo = "sha256")
+sensibilidad$session <- capture.output(sessionInfo())
+save(sensibilidad, file = "04_sensibilidad.RData", compress = "xz")
+```

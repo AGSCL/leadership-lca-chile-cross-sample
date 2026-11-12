@@ -1,0 +1,1769 @@
+---
+title: "03. Asociaciones ponderadas, psicotrópicos y sensibilidades"
+date: last-modified
+author: "Andres Gonzalez Santa Cruz"
+toc: true
+toc-location: left
+format:
+  html:
+    code-fold: true
+    embed-resources: true
+    self-contained: true
+    theme:
+      - journal
+    fig-cap-location: top
+    toc: true
+execute:
+  error: false
+  echo: true
+  warning: true
+  message: true
+  freeze: false
+editor: source
+execute-dir: project
+lightbox: auto
+---
+
+```{r}
+#| label: assoc-output-directory
+#| include: false
+dir.create("salidas", showWarnings = FALSE)
+knitr::opts_knit$set(root.dir = normalizePath("salidas", winslash = "/", mustWork = TRUE))
+```
+
+# Esta etapa
+
+Ejecuta primero `02_hospital.qmd`. Esta etapa lee explícitamente su objeto
+`hospital`, vuelve a armonizar las covariables y comprueba las respuestas fila
+por fila. Reproduce los modelos de Part 2 y su sensibilidad sin satisfacción
+laboral en una sesión limpia; no ejecuta ni extrae chunks de otro QMD.
+Las salidas se guardan en `salidas/`, junto con `03_asociaciones.RData`.
+
+**Revisión autorizada de la especificación.** Todos los ajustes multivariables
+usan el peso postestratificado general y peso 1 hospitalario, normalizados a
+media 1 entre los casos completos de cada ajuste. La especificación principal
+incluye siete covariables binarias y `psychotrop_flexible`, sin satisfacción
+laboral; su promoción editorial al análisis principal queda pendiente de confirmación.
+Las especificaciones anteriores, con satisfacción laboral y sin ella,
+se conservan como sensibilidades ponderadas. Esta decisión fue explícita y no
+depende de cuáles asociaciones resulten significativas. Los resultados
+históricos fuera de `reproducibilidad/` no se modifican.
+
+El modelo de medición y su matriz de clasificación siguen sin ponderación.
+La ponderación actúa en el tercer paso, condicionada a esa medición común.
+El tamaño efectivo informado es el de Kish, no grados de libertad del diseño.
+Los IC de Hessiana no son IC de diseño; el bootstrap compartido se informa
+aparte y tampoco reconstruye conglomerados, estratos o calibración desconocidos.
+
+La corrección existente es ridge de rescate, no Firth: `lambda=0.1` penaliza
+todos los coeficientes, incluidos los interceptos, cuando el ajuste sin
+penalización no converge, no estima un error estándar o presenta algún
+`|beta|>5`. Los IC y ROR derivados de la Hessiana son condicionales a la
+medición y a esa decisión. Los ROR usan suma de varianzas e independencia
+aproximada entre muestras; no corrigen no colapsabilidad, posibles participantes
+compartidos ni incertidumbre del modelo de medición compartido.
+
+Las covariables predicen pertenencia al perfil. Este archivo no estima un
+modelo de consumo de alcohol como desenlace. Cambiar la satisfacción laboral
+modifica a la vez el ajuste y, posiblemente, el conjunto de casos completos;
+un cambio en OR no identifica por sí solo confusión ni mediación.
+
+# Historical specifications retained for sensitivity comparisons
+
+The following sections retain the historical covariate sets for traceability.
+The final section reports the explicitly revised main psychotropic specification.
+All multivariable fits now use the stated sample weights and the same tested
+helper as the shared-measurement bootstrap.
+
+Part 1 (`leadership_LCA_analysis.qmd`) retained **four** latent leadership
+profiles in the general salaried-worker survey and related profile membership to
+covariates with a bias-adjusted **ML three-step** estimator, reporting the
+odds ratios in **Table S1** (reference profile = the strongest-constructive class).
+The multiple-group notebook (`leadership_LCA_multigroup_hospital.qmd`) then
+showed how far that four-class *measurement* structure travels to a second
+sample of hospital healthcare workers. BIC supported a **shared-profile approximation**
+across the two settings, with LRT and AIC providing caveats.
+
+**Part 2 asks a different, downstream question: are the covariate-profile
+associations themselves modified by sample?** That is, having a comparable
+four-class solution in each setting, does a given exposure (effort-reward
+imbalance, hazardous drinking, absence of union, frequent negative acts,
+self-labelled bullying, sexual harassment, female sex, job satisfaction) push
+workers toward the same profiles *to the same degree* in the general and hospital
+samples, or is the association stronger/weaker/reversed in one setting?
+
+The workflow is:
+
+| Step | What is done | Section |
+|---|---|---|
+| Harmonise both samples | 13 shared items (positional crosswalk `p39_k <-> lid_des_k`, item 3 excluded) + 7 binary covariates coded **1 = exposed** + job satisfaction (continuous, standardised within sample) | *this section* |
+| Shared measurement model | Fit the retained **k = 4** leadership LCA as a **measurement-invariant multiple-group** model (item probabilities shared, so the profiles are the same object in both samples) | Section 2 |
+| Table S1-style ORs per sample | ML three-step odds ratios (`ml3step()` from Part 1), one covariate at a time, in each sample's slice of the shared model | Section 3 |
+| **Effect modification by sample** | Ratio of odds ratios **ROR = OR(hospital) / OR(general)** with a 95% CI and a Wald test of log ROR (Cochran's Q and I² retired 2026-10-18) | Section 4 |
+
+**Interpretation key (effect modification on the ratio scale).** For each
+covariate × profile contrast we treat the two samples as two strata and quantify
+modification with the **ratio of odds ratios**, `ROR = OR_hosp / OR_gen`, whose
+log has variance `SE(logOR_gen)² + SE(logOR_hosp)²`; a 95% CI for the ROR that
+**excludes 1** indicates the association differs by sample (multiplicative
+effect modification). Cochran's Q and I² were retired on 2026-10-18: with two
+samples Q equals the squared Wald statistic of log ROR and adds no information.
+This is the Kaufman & MacLehose (2013)
+framing: interaction/effect-modification is scale-dependent, so we state the
+measure (odds-ratio scale) explicitly and read the ROR and its interval rather than
+declaring a single "interaction test". Because latent-class labels are arbitrary
+(label switching), the four profiles must be defined on a common footing across
+samples before ORs are compared. Part 2 achieves this by scoring both samples
+with a single **measurement-invariant** four-class model (shared item-response
+probabilities), so class *j* is literally the same profile in each sample — that
+model is fitted in Section 2, not here.
+
+> **This section (Section 1) delivers the harmonised, pooled analysis object
+> `combo`** — the 13 shared items as 1–4 factors, the 7 covariates as 0/1
+> (1 = exposed) columns with **identical names in both samples**, a `setting`
+> factor, and a survey weight `.w` — together with the reusable helpers and the
+> `common_items` / `cov_keys` / `setting_levels` vectors consumed by every later
+> section. No models are fitted here.
+
+## Confirmed data crosswalk (general `.rds` vs hospital `.dta`)
+
+Both samples are recoded so that **`1` always means EXPOSED**. General-survey
+covariates are labelled factors dichotomised exactly as in Part 1's `yes_levels`;
+hospital binary covariates are read by their numeric codes (`1 = exposed`),
+except **`no_union`, which is derived** from `p4` (0 = 'No' union org, 1 = 'Si')
+as `p4 == 0` = *absence of union*.
+
+| Covariate (1 = exposed) | General `.rds` column → exposed level | Hospital `.dta` column → exposed level |
+|---|---|---|
+| `eri` (effort-reward imbalance) | `desbalance_dic` = 'Yes' | `dicotomizada_desbalance_esfuerzo` = 1 |
+| `auditc_hazard` (hazardous alcohol) | `auditc` = 'Yes' | `auditc_ambossexos` = 1 |
+| `no_union` (absence of union) | `org_sind` = 'Yes' | **derived** `as.integer(p4 == 0)` |
+| `naq_frequent` (frequent negative acts, Agervold) | `naq_a` = '2' | `naq_agervold` = 1 |
+| `bully_self` (self-labelled bullying, 6 mo) | `autonaq` = 'Yes' | `p19` = 1 |
+| `sex_harass` (sexual harassment, 12 mo) | `acos_sex` = '2' | `p25` = 1 |
+| `sex_woman` (female) | `a52` = 'Women' | `sexo_recod` = 1 |
+| `job_sat` (job satisfaction, continuous) | `satis` (sum score 0–20) | sum of `p41_1..p41_5` (standardised to z-score within each sample before ORs) |
+| `psychotrop_flexible` (main specification) | `a46_top_1`, `a46_top_12`, `a46_top_13`: 1=no, 2=yes, 3=missing | `p44_1`, `p44_2`, `p44_3`: 0=no, 1=yes |
+
+Psychotropic items cover anxiolytics, hypnotics and antidepressants. Any observed
+yes gives 1, including when another item is missing; three observed no responses
+give 0; all other patterns remain missing. The original `psicotrop` columns are
+retained separately without recoding. Item labels do not establish the recall
+window, so temporal equivalence still requires questionnaire confirmation.
+
+Items: general `lid_des1..14` **without `lid_des3`**; hospital `p39_1..14`
+**without `p39_3`** (positional crosswalk). Item values coded 0–3 in either file
+are shifted **+1 → 1–4** per file, using that file's own minimum (as in the MG
+notebook's `prep_group`).
+
+```{r}
+#| label: assoc-setup
+#| results: "hold"
+
+rm(list = ls()); gc()
+
+## Packages for Part 2 (same core stack as the sibling notebooks). Part 2 does not
+## use ml3step_margins()/BCH, so MASS/survey are not required; the modelling helpers
+## it does use (ml3step, class_matrix) are ported verbatim in Section 2.
+required_packages <- c(
+  "dplyr", "tidyr", "tibble", "purrr",
+  "haven", "readr", "janitor",
+  "glca",
+  "ggplot2", "scales",
+  "knitr", "kableExtra", "digest"
+)
+missing_packages <- required_packages[!vapply(required_packages, requireNamespace,
+                                               logical(1), quietly = TRUE)]
+if (length(missing_packages))
+  stop("Instala primero estos paquetes: ", paste(missing_packages, collapse = ", "))
+invisible(lapply(required_packages, function(pkg)
+  suppressPackageStartupMessages(library(pkg, character.only = TRUE))))
+source("../R/association_models.R")
+check_association_models()
+
+set.seed(2125)                 # lucky seed, shared with Part 1 and the MG notebook
+options(scipen = 999)
+
+## Reportable measurement fit: 4000 random starts. Cached fits must have at least
+## this many starts; response-row alignment is checked before posterior reuse.
+n_init <- 4000L
+```
+
+```{r}
+#| label: assoc-load-data
+#| results: "hold"
+
+## Explicit environment path first, then project-local inputs, then legacy Drive.
+resolve_drive_path <- function(rel, env_var,
+    roots = c("H:/My Drive", "G:/Mi unidad", "C:/Users/andre/Google Drive")) {
+  rel <- chartr("\\", "/", rel)
+  explicit <- Sys.getenv(env_var, unset = "")
+  if (nzchar(explicit)) {
+    if (!file.exists(explicit)) stop(env_var, " points to a missing file: ", explicit)
+    return(normalizePath(explicit, winslash = "/", mustWork = TRUE))
+  }
+  candidates <- unique(c(basename(rel), file.path("..", "data", "private", basename(rel)),
+                         file.path("..", "..", basename(rel)), rel, file.path(roots, rel)))
+  found <- candidates[file.exists(candidates)]
+  if (length(found)) return(normalizePath(found[[1]], winslash = "/", mustWork = TRUE))
+  stop("Input not found. Set ", env_var, " to the authorised local input file. Tried:\n  ",
+       paste(candidates, collapse = "\n  "))
+}
+read_any <- function(path) {
+  switch(tolower(tools::file_ext(path)),
+    dta = haven::read_dta(path), sav = haven::read_sav(path),
+    rds = readRDS(path), csv = readr::read_csv(path, show_col_types = FALSE),
+    stop("Extension no soportada: ", tools::file_ext(path)))
+}
+
+## ---- coercion helpers (identical to Part 1's load-data) ------------------
+## Robust numeric: works for factor-of-numbers and for labelled/numeric.
+as_num <- function(x) {
+  if (is.factor(x)) return(suppressWarnings(as.numeric(as.character(x))))
+  as.numeric(haven::zap_labels(x))
+}
+## Binary 0/1 from a labelled/factor column: 1 = level(s) in `yes`, matched on the
+## TEXT label via haven::as_factor. "NA"/"Not Apply"/"NaN"/"" -> missing (not 0).
+to01 <- function(x, yes) {
+  f <- as.character(haven::as_factor(x))
+  f[f %in% c("NA", "Not Apply", "NaN", "")] <- NA
+  out <- as.integer(f %in% yes)
+  out[is.na(f)] <- NA_integer_
+  out
+}
+
+## Legacy input locations, overridden by LCA_RAW_PATH / LCA_HOSPITAL_PATH.
+gen_rel  <- "DOCUMENTOS/6.TESIS 2018/LCA NAQ/BD_2020_input3_match_not_miss.rds"
+hosp_rel <- "DOCUMENTOS/6.TESIS 2018/_BASE DEF_FINAL/andrea/Base de datos 27.8.2019.dta"
+
+## ---- 13 leadership items, positional crosswalk p39_k <-> lid_des_k, item 3 out
+gen_items    <- paste0("lid_des", c(1:2, 4:14))   # 13 items, lid_des3 dropped
+hosp_items   <- paste0("p39_",    c(1:2, 4:14))   # 13 items, p39_3 dropped
+common_items <- sprintf("I%02d", seq_along(gen_items))   # I01..I13
+
+## ---- the 8 covariates compared in Part 2: 7 binary + job satisfaction -------
+cov_keys <- c("eri", "auditc_hazard", "no_union", "naq_frequent",
+              "bully_self", "sex_harass", "sex_woman", "job_sat")
+specifications <- list(
+  main = c(setdiff(cov_keys, "job_sat"), "psychotrop_flexible"),
+  legacy_jobsat = cov_keys,
+  legacy_nojobsat = setdiff(cov_keys, "job_sat"))
+covariate_columns <- unique(c(cov_keys, specifications$main))
+
+## GENERAL survey (labelled FACTORS): 1 = the text level in `yes`, exactly the
+## yes_levels dichotomisation of Part 1's load-data.
+gen_cov <- list(
+  eri           = list(col = "desbalance_dic", yes = "Yes"),
+  auditc_hazard = list(col = "auditc",         yes = "Yes"),
+  no_union      = list(col = "org_sind",       yes = "Yes"),
+  naq_frequent  = list(col = "naq_a",          yes = "2"),
+  bully_self    = list(col = "autonaq",        yes = "Yes"),
+  sex_harass    = list(col = "acos_sex",       yes = "2"),
+  sex_woman     = list(col = "a52",            yes = "Women"),
+  job_sat       = list(derive = function(df) as_num(df[["satis"]])),
+  psychotrop_flexible = list(derive = function(df)
+    derive_psychotrop_flexible(df, c("a46_top_1", "a46_top_12", "a46_top_13"),
+                              yes = 2, no = 1, missing_codes = 3))
+)
+## HOSPITAL survey: coded by the NUMERIC value (1 = exposed) rather than the value
+## LABEL, because the .dta's exposed labels do not match short text (e.g. the real
+## label is "Con desbalance esfuerzo recompensa", "expuesto a intimidacion",
+## "Si, si existe") -- a text match silently returns all-0 (constant). Every source
+## column below is coded 1 = exposed; no_union is p4 == 0 (p4: 1 = union org exists).
+hosp_cov <- list(
+  eri           = list(derive = function(df) as.integer(as_num(df[["dicotomizada_desbalance_esfuerzo"]]) == 1)),
+  auditc_hazard = list(derive = function(df) as.integer(as_num(df[["auditc_ambossexos"]]) == 1)),
+  no_union      = list(derive = function(df) as.integer(as_num(df[["p4"]]) == 0)),
+  naq_frequent  = list(derive = function(df) as.integer(as_num(df[["naq_agervold"]]) == 1)),
+  bully_self    = list(derive = function(df) as.integer(as_num(df[["p19"]]) == 1)),
+  sex_harass    = list(derive = function(df) as.integer(as_num(df[["p25"]]) == 1)),
+  sex_woman     = list(derive = function(df) as.integer(as_num(df[["sexo_recod"]]) == 1)),
+  job_sat       = list(derive = function(df) {
+    cols <- paste0("p41_", 1:5)
+    rowSums(sapply(cols, function(col)
+      if (col %in% names(df)) as_num(df[[col]]) else rep(NA_real_, nrow(df))),
+      na.rm = FALSE)
+  }),
+  psychotrop_flexible = list(derive = function(df)
+    derive_psychotrop_flexible(df, c("p44_1", "p44_2", "p44_3"), yes = 1, no = 0))
+)
+stopifnot(setequal(names(gen_cov), covariate_columns),
+          setequal(names(hosp_cov), covariate_columns))
+
+## ---- load + clean names --------------------------------------------------
+gen_path  <- resolve_drive_path(gen_rel, "LCA_RAW_PATH")
+hosp_path <- resolve_drive_path(hosp_rel, "LCA_HOSPITAL_PATH")
+message("General file : ", gen_path)
+message("Hospital file: ", hosp_path)
+gen_raw  <- read_any(gen_path)  |> janitor::clean_names()
+hosp_raw <- read_any(hosp_path) |> janitor::clean_names()
+
+## ---- defensive check: the item columns exist in each file ----------------
+check_items <- function(df, items, label) {
+  miss <- setdiff(items, names(df))
+  if (length(miss)) {
+    cand <- grep("^(lid_des|p39_)[0-9]+$", names(df), value = TRUE)
+    stop("En la base '", label, "' faltan estas columnas de items: ",
+         paste(miss, collapse = ", "),
+         "\nColumnas tipo item detectadas: ",
+         if (length(cand)) paste(cand, collapse = ", ") else "(ninguna)",
+         "\nEdita 'gen_items'/'hosp_items' para que coincidan.")
+  }
+  invisible(TRUE)
+}
+check_items(gen_raw,  gen_items,  "general")
+check_items(hosp_raw, hosp_items, "hospital")
+
+## ---- harmonise the 13 items: select, shift 0-3 -> 1-4 per file, factor 1:4
+## (identical to the MG notebook's prep_group; each file shifted on its own min).
+prep_group <- function(df, items, common, group_label) {
+  x <- df[, items, drop = FALSE]
+  names(x) <- common
+  item_min <- suppressWarnings(min(vapply(x,
+                function(v) min(as.numeric(v), na.rm = TRUE), numeric(1))))
+  shift <- if (is.finite(item_min) && item_min == 0) 1L else 0L
+  for (nm in common) x[[nm]] <- ordered(as.numeric(x[[nm]]) + shift, levels = 1:4)
+  if (shift == 1L) message("[", group_label, "] items recodificados 0-3 -> 1-4 (+1).")
+  as.data.frame(x)
+}
+
+## ---- build the 0/1 covariate block (1 = EXPOSED) for one sample ----------
+## Each cov_key is either a text-level match via to01(col, yes) or a derive() rule.
+build_covs <- function(df, spec, label) {
+  cols <- lapply(names(spec), function(k) {
+    s <- spec[[k]]
+    if (!is.null(s$derive)) return(s$derive(df))
+    if (!s$col %in% names(df))
+      stop("[", label, "] falta la columna fuente '", s$col,
+           "' para la covariable '", k, "'. Revisa el crosswalk.")
+    to01(df[[s$col]], s$yes)
+  })
+  names(cols) <- names(spec)
+  tibble::as_tibble(cols)
+}
+
+## ---- assemble one sample: items + covariates + weight + setting ----------
+prep_sample <- function(raw, items, cov_spec, weight_col, label) {
+  it <- prep_group(raw, items, common_items, label)          # I01..I13 factors 1:4
+  cv <- build_covs(raw, cov_spec, label)                     # 7 x 0/1 columns
+  if (!is.null(weight_col) && !weight_col %in% names(raw))
+    stop("Missing required sampling weight: ", weight_col)
+  w <- if (!is.null(weight_col)) as_num(raw[[weight_col]]) else rep(1, nrow(raw))
+  if (any(!is.finite(w)) || any(w <= 0)) stop("Invalid sampling weights in ", label)
+  out <- dplyr::bind_cols(it, cv[, covariate_columns])
+  out$setting <- label
+  out$.w      <- w
+  out$.row_id <- seq_len(nrow(raw))
+  out
+}
+
+## General has a survey weight ('weight'); hospital may not -> default 1.
+gen_s  <- prep_sample(gen_raw,  gen_items,  gen_cov,  "weight", "General salaried")
+hosp_s <- prep_sample(hosp_raw, hosp_items, hosp_cov, NULL, "Hospital HCW")
+
+## ---- pool, keep complete cases on the 13 items, set setting factor -------
+setting_levels <- c("General salaried", "Hospital HCW")
+combo <- dplyr::bind_rows(gen_s, hosp_s)
+combo <- combo[stats::complete.cases(combo[, common_items]), ]   # items only
+combo$setting <- factor(combo$setting, levels = setting_levels)
+
+## ---- defensive check: every compared covariate column is present ---------
+miss_cov <- setdiff(cov_keys, names(combo))
+if (length(miss_cov))
+  stop("Faltan columnas de covariable en 'combo': ", paste(miss_cov, collapse = ", "),
+       ". Revisa gen_cov/hosp_cov y el crosswalk.")
+stopifnot(all(c(common_items, "setting", ".w") %in% names(combo)))
+
+cat("Complete-case n by setting (13 items):\n"); print(table(combo$setting))
+cat("\nPooled n =", nrow(combo), "on", length(common_items), "items and",
+    length(cov_keys), "covariates.\n")
+```
+
+```{r}
+#| label: assoc-covariate-coverage
+#| results: "hold"
+
+## Sanity check: for each compared covariate, non-missing n and % exposed (mean of
+## the 0/1 column) BY setting. Both samples must code 1 = EXPOSED; a covariate that
+## is all-NA in one sample, or whose prevalence looks inverted, flags a
+## crosswalk/labelling problem to fix BEFORE the ML three-step / ROR comparison.
+## Covariates may carry NA (dropped per-covariate by ml3step later); only the 13
+## items are complete-case in `combo`.
+cov_cov <- purrr::map_dfr(cov_keys, function(k) {
+  vg <- combo[[k]][combo$setting == "General salaried"]
+  vh <- combo[[k]][combo$setting == "Hospital HCW"]
+  tibble::tibble(
+    Covariate        = k,
+    `Gen n`          = sum(!is.na(vg)),
+    `Gen % exposed`  = round(100 * mean(vg, na.rm = TRUE), 1),
+    `Hosp n`         = sum(!is.na(vh)),
+    `Hosp % exposed` = round(100 * mean(vh, na.rm = TRUE), 1))
+})
+cov_cov |>
+  knitr::kable("markdown",
+    caption = "Covariate harmonisation check: non-missing n and % exposed (column = 1) by setting for the 7 binary + job satisfaction covariates. For job_sat the 'mean' column is the within-sample mean of the raw score before standardisation. Both binary samples must code 1 = EXPOSED; verify direction and coverage before the per-sample ML three-step ORs and the ROR effect-modification comparison.")
+```
+
+```{r}
+#| label: assoc-item-meta
+#| results: "hold"
+
+## Behaviour type + English label for each of the 13 items (order = common_items,
+## i.e. gen_items = lid_des1..14 with item 3 excluded). Defined ONCE here (verbatim
+## from the MG notebook's item-meta chunk) so the shared-labels chunk in Section 2
+## can score/label the invariant profiles. common_items comes from load-data.
+item_type <- c("Destructive","Constructive","Destructive","Laissez-faire",
+               "Constructive","Laissez-faire","Destructive","Laissez-faire",
+               "Destructive","Constructive","Constructive","Constructive","Constructive")
+item_lab  <- c("Humiliates employees","Encourages creative ideas","Gestures of displeasure",
+               "Avoids making decisions","Recognizes good performance","Avoids involvement in work",
+               "Spreads false information","Absent when needed","Berates by phone / rude email",
+               "Seeks to develop capabilities","Sets clear objectives","Defines / explains tasks",
+               "Flexible, open to innovation")
+stopifnot(length(item_type) == length(common_items), length(item_lab) == length(common_items))
+```
+
+# 2. Helpers, invariant multiple-group model, per-group posteriors, and the reference profile
+
+Part 1 established that the four leadership profiles are **measurement-invariant**
+across the general salaried survey and the hospital HCW sample (item-response
+probabilities shared, `measure.inv = TRUE`). Part 2 exploits that result directly:
+because the item probabilities are held equal across settings, **the four profiles
+are literally the same object in both samples** — "class *j*" denotes the identical
+response pattern in general and hospital workers. That is exactly what makes a
+*ratio of odds ratios* (ROR) across settings well-defined: a per-group covariate
+odds ratio for class *j* (vs. the shared reference) is comparable point-for-point
+because the two ORs describe membership in the **same** latent profile.
+
+The modelling flow of this section is:
+
+1. **Port the helpers** used throughout Part 2, verbatim from the two sibling
+   notebooks: `relative_entropy`, `get_post_list`, `group_prev`, `top2_mat`,
+   `get_rho` (from the multi-group notebook) and `class_matrix` + the from-scratch
+   ML three-step estimator `ml3step()` (from the main analysis). `ml3step()` returns
+   `list(par, V, K, ors = tibble(class, OR, lo, hi))` and internally fixes the
+   reference at column 1.
+2. **Fit the invariant 4-class multiple-group model** `g4_inv` on the pooled
+   `combo`, with the same seed-fallback / Mersenne-Twister / `n_init` gate as
+   Part 1 (4,000 random starts).
+3. **Extract the per-group posteriors and modal assignments** from `g4_inv` in the
+   order `levels(combo$setting)` — `post_g`/`modal_g` for *General salaried*,
+   `post_h`/`modal_h` for *Hospital HCW* — and **guard** that each group's posterior
+   has exactly that group's complete-case row count.
+4. **Label the four shared classes data-drivenly** from the single shared `rho`
+   (mean top-2 endorsement by behaviour type) and pick the **reference class = the
+   shared strongest-constructive profile** (highest constructive family score,
+   consistent with Part 1's C3 Active constructive reference). Section 3 then runs
+   one `ml3step()` per covariate, per sample, referenced to this same profile via
+   `ml3step_ref()`, so every reported per-group odds ratio — and their ROR — is
+   "class *j* vs. the shared strongest-constructive baseline", directly comparable
+   across settings.
+
+## 2.1 Helpers (ported verbatim)
+
+```{r}
+#| label: assoc-helpers-part2
+#| results: "hold"
+
+## ---- helpers reused from the multiple-group notebook ---------------------
+
+## Relative entropy (0-1; higher = cleaner separation) from a posterior matrix.
+relative_entropy <- function(post) {
+  post <- as.matrix(post)
+  N <- nrow(post); K <- ncol(post)
+  if (K < 2) return(NA_real_)
+  e <- -sum(post * log(pmax(post, 1e-12)))
+  1 - e / (N * log(K))
+}
+
+## glca stores multiple-group posteriors as a LIST (one matrix per group). This
+## returns that list regardless of single/multi group so pooled entropy and
+## per-group prevalences work uniformly.
+get_post_list <- function(g) {
+  p <- g$posterior
+  if (is.matrix(p) || is.data.frame(p)) list(as.matrix(p))
+  else lapply(p, as.matrix)
+}
+
+## Per-group class prevalences = mean posterior within each group. Rows aligned
+## to the group factor levels in the order glca returns them.
+group_prev <- function(g, group_levels) {
+  pl <- get_post_list(g)
+  m  <- t(vapply(pl, function(p) colMeans(p), numeric(ncol(pl[[1]]))))
+  nm <- names(pl)
+  rownames(m) <-
+    if (!is.null(nm) && all(nzchar(nm)) && length(nm) == nrow(m)) nm
+    else if (length(group_levels) == nrow(m)) group_levels
+    else paste0("G", seq_len(nrow(m)))
+  colnames(m) <- paste0("C", seq_len(ncol(m)))
+  m
+}
+
+## Item-response probabilities. For a SINGLE-group fit, rho[[item]] is K x 4.
+## For a multi-group measure.inv = FALSE fit, rho is nested by group; pick a group.
+## Under measure.inv = TRUE (our g4_inv) rho is COMMON, so group is irrelevant.
+get_rho <- function(g, group = 1L) {
+  r <- g$param$rho
+  if (is.list(r) && is.list(r[[1]])) r <- r[[group]]   # unwrap group level if present
+  r
+}
+
+## Top-2 endorsement (categories 3+4) per item x class, from a rho list.
+top2_mat <- function(rho, K) {
+  m <- t(vapply(seq_along(rho), function(j) rho[[j]][, 3] + rho[[j]][, 4], numeric(K)))
+  rownames(m) <- common_items; colnames(m) <- paste0("C", 1:K)
+  m
+}
+
+## ---- helpers ported verbatim from the MAIN analysis ----------------------
+
+## Classification matrix D[t, w] = P(W = w | X = t), W = modal class.
+## ---- ML three-step (Vermunt 2010) for ONE covariate z ------------------
+## Maximises  prod_i sum_t pi_t(z_i;b) * P(W=w_i | X=t),  reference class = 1.
+## Returns coefficients, vcov, and per-class odds ratios (exp of the slope).
+ml3step <- function(z, post, modal, sw = NULL, D = NULL) {
+  post <- as.matrix(post); K <- ncol(post)
+  if (is.null(sw)) sw <- rep(1, nrow(post))
+  ## Classification matrix D[t,w]=P(W=w|X=t) is a FIXED property of the
+  ## measurement step: compute it ONCE on the FULL sample (all rows of
+  ## post/modal), BEFORE dropping NA on z. Computing it on the per-covariate
+  ## complete-case subset would give each covariate a different D and would
+  ## disagree with the BCH analysis (which uses the full-sample D).
+  if (is.null(D)) D <- class_matrix(post, modal)  # K x K, full measurement sample
+  z <- as.numeric(z)
+  ok <- !is.na(z)
+  z <- z[ok]; modal <- modal[ok]; post <- post[ok, , drop = FALSE]; sw <- sw[ok]
+  n <- length(z)   # rows AFTER dropping NA on z; must match z/sw or negll's
+                   # outer(rep(1, n), a) is non-conformable when z has missings.
+  Dw <- t(D[, modal])                            # n x K ; [i,t]=P(W=w_i|X=t)
+                                                 # global D indexed by the subset modal
+  negll <- function(par) {
+    a <- c(0, par[seq(1, 2 * (K - 1), 2)])       # intercepts (a_1 = 0)
+    b <- c(0, par[seq(2, 2 * (K - 1), 2)])       # slopes     (b_1 = 0)
+    eta <- outer(rep(1, n), a) + outer(z, b)     # n x K
+    eta <- eta - apply(eta, 1, max)              # stabilise
+    pis <- exp(eta); pis <- pis / rowSums(pis)   # n x K class probs
+    pw <- rowSums(pis * Dw)                       # P(W=w_i)
+    -sum(sw * log(pmax(pw, 1e-12)))
+  }
+  fit <- optim(rep(0, 2 * (K - 1)), negll, method = "BFGS", hessian = TRUE)
+  V <- tryCatch(solve(fit$hessian), error = function(e) matrix(NA, length(fit$par), length(fit$par)))
+  b_idx <- seq(2, 2 * (K - 1), 2)
+  b  <- fit$par[b_idx]
+  se <- sqrt(diag(V))[b_idx]
+  tibble::tibble(
+    class = 2:K,
+    OR    = exp(b),
+    lo    = exp(b - 1.96 * se),
+    hi    = exp(b + 1.96 * se)
+  ) -> ors
+  list(par = fit$par, V = V, K = K, ors = ors, conv = fit$convergence)
+}
+```
+
+## 2.2 Invariant four-class multiple-group fit (`g4_inv`)
+
+```{r}
+#| label: assoc-fit-invariant
+#| results: "hold"
+
+if (!file.exists("02_hospital.RData"))
+  stop("Falta 02_hospital.RData. Ejecuta 02_hospital.qmd primero.")
+checkpoint_env <- new.env(parent = emptyenv())
+loaded_names <- load("02_hospital.RData", envir = checkpoint_env)
+if (!identical(loaded_names, "hospital"))
+  stop("02_hospital.RData debe contener solamente hospital.")
+hospital <- checkpoint_env$hospital
+current_input <- as.data.frame(combo[, c(common_items, "setting"), drop = FALSE])
+rownames(current_input) <- NULL
+if (!identical(hospital$input, current_input) || hospital$n_init != n_init ||
+    !identical(hospital$seed, 2125L))
+  stop("02_hospital.RData no coincide con los datos o configuración actual.")
+if (!identical(hospital$provenance$model_input_hash,
+               digest::digest(hospital$input, algo = "sha256")))
+  stop("La huella de las filas de medición no coincide.")
+hospital_code <- c("../02_hospital.qmd", "../R/canonical_class_numbering.R")
+if (!all(file.exists(hospital_code)) ||
+    !identical(hospital$provenance$code_hash, tools::md5sum(hospital_code)))
+  stop("El código de la etapa 02 cambió. Revisa y regenera su punto de control.")
+g4_inv <- hospital$g4_inv
+attr(g4_inv, "lca_provenance") <- list(n_init = hospital$n_init,
+  fit_date = hospital$provenance$created, source = "02_hospital.RData")
+cat("Modelo invariante recibido de 02_hospital.RData y validado.\n")
+stopifnot(!is.null(g4_inv))
+```
+
+## 2.3 Per-group posteriors and modal assignments (with alignment guards)
+
+```{r}
+#| label: assoc-per-group-post
+#| results: "hold"
+
+## Per-group posteriors from the invariant model, in levels(combo$setting) order:
+##   gl[1] = "General salaried"  -> post_g / modal_g
+##   gl[2] = "Hospital HCW"      -> post_h / modal_h
+gl <- levels(combo$setting)
+## Verify the exact response rows, item coding and group order, not just n.
+## This guard also runs when the no-job-satisfaction notebook inherits this chunk
+## and loads the raw canonical cache directly.
+if (!isTRUE(g4_inv$model$measure.inv) || g4_inv$model$C != 4 ||
+    !identical(g4_inv$var.names$y.names, common_items) ||
+    !identical(g4_inv$var.names$g.names, gl))
+  stop("Cached measurement model does not match the specified 13-item, four-class groups.")
+for (j in seq_along(gl)) {
+  current_y <- data.matrix(combo[combo$setting == gl[j], common_items, drop = FALSE])
+  stored_y <- g4_inv$datalist$y[[j]]
+  if (!isTRUE(all.equal(unname(current_y), unname(stored_y), check.attributes = FALSE)))
+    stop("Cached response rows differ from current input in ", gl[j],
+         ". Rebuild the measurement cache explicitly; do not reuse these posteriors.")
+}
+pl <- get_post_list(g4_inv)               # one posterior matrix per group
+
+## glca returns the list in group order and usually names it by the group level;
+## reorder by name when available, otherwise trust the documented factor-level order.
+if (!is.null(names(pl)) && all(nzchar(names(pl))) && setequal(names(pl), gl)) pl <- pl[gl]
+stopifnot(length(pl) == length(gl))
+
+post_g <- pl[[1]]; modal_g <- max.col(post_g)   # General salaried
+post_h <- pl[[2]]; modal_h <- max.col(post_h)   # Hospital HCW
+
+## Guard: each group's posterior must have exactly that group's complete-case n.
+## If glca dropped rows, post_* would silently misalign with the group's covariate
+## vectors, corrupting every per-sample odds ratio.
+n_g <- sum(combo$setting == gl[1]); n_h <- sum(combo$setting == gl[2])
+stopifnot(nrow(post_g) == n_g, nrow(post_h) == n_h,
+          ncol(post_g) == ncol(post_h))
+cat(sprintf("Per-group posteriors OK: %s n=%d, %s n=%d, K=%d\n",
+            gl[1], n_g, gl[2], n_h, ncol(post_g)))
+## PRIVATE: raw glca shape is required by the figures and no-job-satisfaction
+## notebooks. The object contains respondent-level responses and posteriors.
+saveRDS(g4_inv, "cache_g4_inv_part2.rds")
+
+```
+
+## 2.4 Data-driven labels for the four shared profiles and the reference class
+
+The reference is the shared **strongest-constructive** profile — the class with the
+highest mean constructive-item endorsement (ties broken by lowest destructive score),
+consistent with Part 1's revised reference (C3 Active constructive). It is identified
+data-drivenly from the invariant model's family scores; no label matching is used.
+
+```{r}
+#| label: assoc-shared-labels
+#| results: "hold"
+
+## Shared item-response probabilities of the invariant 4-class model. measure.inv
+## = TRUE -> rho is common to BOTH settings, so ONE profile set fits both samples.
+rho_inv <- get_rho(g4_inv)                        # 13 items; each a K x 4 rho matrix
+Kinv    <- ncol(post_g)                           # = 4
+t2_inv  <- top2_mat(rho_inv, Kinv)                # top-2 endorsement per item x class
+
+## Family means (mean top-2 by behaviour type). item_type is defined once in the
+## item-meta chunk (order = common_items).
+fam_inv <- t(vapply(c("Destructive", "Laissez-faire", "Constructive"),
+             function(ty) colMeans(t2_inv[item_type == ty, , drop = FALSE]), numeric(Kinv)))
+
+## Data-driven label per class from its family scores (no hand-coded numbers).
+lab_inv <- vapply(seq_len(Kinv), function(k) {
+  con <- fam_inv["Constructive", k]; lf <- fam_inv["Laissez-faire", k]; de <- fam_inv["Destructive", k]
+  if (con >= 0.80 && de < 0.10)        "Strong constructive"
+  else if (con >= 0.55 && de < 0.10)   "Constructive"
+  else if (de >= 0.08 || lf >= 0.15)   "Ambivalent (tyrannical + avoidant behaviors)"
+  else                                 "Disengaged (low observed endorsement)"
+}, character(1))
+
+ord_inv <- order(-fam_inv["Constructive", ])      # most -> least constructive
+
+## Reference class = strongest-constructive profile: highest mean constructive
+## family score; ties broken by lowest destructive score. Purely data-driven —
+## no label matching, survives any relabelling of the invariant model.
+ref_class <- order(-fam_inv["Constructive", ], fam_inv["Destructive", ])[1]
+ref_label <- lab_inv[ref_class]
+message(sprintf("Reference class = raw glca index C%d (%s): strongest-constructive baseline.",
+                ref_class, ref_label))
+
+## Small table: shared-profile family scores + data-driven labels + reference mark.
+tibble::tibble(
+  Class             = paste0("raw C", 1:Kinv),
+  `Constructive %`  = round(fam_inv["Constructive", ] * 100),
+  `Laissez-faire %` = round(fam_inv["Laissez-faire", ] * 100),
+  `Tyrannical %`    = round(fam_inv["Destructive", ] * 100),
+  Label             = lab_inv,
+  Reference         = ifelse(seq_len(Kinv) == ref_class, "<- reference (strongest constructive)", "")
+)[ord_inv, ] |>
+  knitr::kable("markdown",
+    caption = "Invariant four-class model: family scores (mean top-2 endorsement by behaviour type, %) and data-driven label for each SHARED profile (identical in both settings under measure.inv = TRUE), ordered most to least constructive. The reference class for every per-sample ML three-step model is the strongest-constructive profile, marked in the last column.")
+
+## Manuscript numbering. The raw glca index above is arbitrary and must never
+## reach a table: it differs between models, so a table printed with it has to be
+## renumbered by hand and can end up contradicting Table 2. This assigns the
+## manuscript numbers from the behavioral signature (C1 moderately constructive,
+## C2 disengaged, C3 constructive and the reference, C4 ambivalent) and stops if
+## the reference is not the constructive class. Creates ms_num, ms_lab, ms_tag(),
+## ms_contrast(); every table below prints those.
+source("../R/canonical_class_numbering.R")
+stopifnot(exists("ms_num"), exists("ms_lab"), exists("ms_contrast"),
+          ms_num[ref_class] == 3L)
+```
+
+# 3. Per-sample ML three-step odds ratios (general vs hospital)
+
+Having established (Sections 1–2) that the four leadership profiles are shared
+across settings under measurement invariance, we now ask **whether the same
+workplace exposures relate to profile membership in the same way in each sample**.
+For every one of the seven Table S1 covariates (built so that `1 = exposed` in
+*both* samples) and for each sample, we regress latent-profile membership on the
+covariate with the bias-adjusted **maximum-likelihood three-step** estimator of the
+main analysis (`ml3step()`, from Section 2). Both samples are scored with the
+**same invariant four-class measurement model** (`g4_inv`, `measure.inv = TRUE`):
+the classification matrix `D` and posteriors are taken *per group* from that shared
+model, so the general-sample odds ratios here are on the same measurement footing
+as the hospital ones (and may differ slightly from the main-analysis Table S1,
+which used a general-only measurement model).
+
+The reference profile is the shared **strongest-constructive** class selected in
+Section 2. Because `ml3step()` hard-codes class 1 as the multinomial-logit
+reference, we wrap it in `ml3step_ref()`, which relabels the classes so the chosen
+reference becomes class 1, calls the unchanged estimator, and maps the returned
+non-reference classes back to their original indices — reference coding is only a
+reparametrisation, so the likelihood is untouched.
+
+Row alignment is the load-bearing step: each sample's covariate/weight frame is
+rebuilt from the raw file with `prep_group()` and filtered to complete cases on the
+13 items using the **identical predicate** that produced `combo`, so it lines up
+row-for-row with that group's slice of `g4_inv`'s posterior (asserted with
+`stopifnot`). The general sample carries its survey weights; the hospital `.dta`
+has no sampling weights, so it is unweighted (`w = 1`).
+
+```{r}
+#| label: assoc-s3-helpers
+#| results: "hold"
+
+## Safe column getter: missing column -> all-NA vector (covariate will be skipped).
+pick_col <- function(df, nm) if (nm %in% names(df)) df[[nm]] else {
+  message("[warn] columna no encontrada: ", nm, " -> covariable = NA (se omitira).")
+  rep(NA, nrow(df))
+}
+
+## --- ml3step with an ARBITRARY reference class ------------------------------
+## ml3step() fixes class 1 as the logit reference (a_1 = b_1 = 0). To use another
+## reference we RELABEL the classes so `ref` becomes class 1, call the unchanged
+## estimator, then map the returned non-reference classes (2..K in permuted order)
+## back to their ORIGINAL indices. Reference coding is a reparametrisation only,
+## so D and the likelihood are invariant to the relabelling.
+ml3step_ref <- function(z, post, modal, sw = NULL, ref = 1L) {
+  post <- as.matrix(post); K <- ncol(post)
+  ref  <- as.integer(ref)
+  stopifnot(ref >= 1L, ref <= K)
+  ord    <- c(ref, setdiff(seq_len(K), ref))       # ref first, others ascending
+  postR  <- post[, ord, drop = FALSE]
+  modalR <- match(modal, ord)                      # modal in permuted labelling
+  m <- ml3step(z = z, post = postR, modal = modalR, sw = sw)  # D recomputed on permuted post
+  m$ors$class <- ord[m$ors$class]                  # permuted 2..K -> original class index
+  m$ref <- ref; m$ord <- ord
+  m
+}
+
+## --- ML three-step for MULTIPLE covariates simultaneously (adjusted ORs) ----
+## Multinomial logistic regression P(X=k | Z) × correction matrix D.
+## lambda = 0 → standard ML three-step; lambda > 0 → L2 ridge penalty (avoids
+## divergence from near-separation, e.g. tiny hospital classes).
+## Returns: list(ors, conv, lambda, n_complete, n_total).
+stopifnot(exists("ml3step_multi"), exists("fit_adj"))
+```
+
+```{r}
+#| label: assoc-s3-covariates
+#| results: "hold"
+
+## The invariant 4-class model, the shared labels and the reference class must
+## exist (Sections 1-2).
+stopifnot(exists("combo"), exists("gen_raw"), exists("hosp_raw"),
+          exists("gen_items"), exists("hosp_items"), exists("common_items"),
+          exists("g4_inv"), exists("ref_class"), exists("lab_inv"))
+
+## Display labels for the 7 covariates (key -> human label). `cov_keys` (the
+## harmonised 0/1 column names) is defined once in Section 1.
+cov_labs <- c(eri           = "Effort-reward imbalance",
+              auditc_hazard = "Hazardous alcohol use (AUDIT-C)",
+              no_union      = "Absence of union",
+              naq_frequent  = "Frequent negative acts (NAQ)",
+              bully_self    = "Self-labeled bullying",
+              sex_harass    = "Sexual harassment",
+              sex_woman     = "Female sex",
+              job_sat       = "Job satisfaction (per 1-SD)",
+              psychotrop_flexible = "Psychotropic use (flexible composite)")
+
+## GENERAL survey (.rds): covariates are FACTORS w/ text labels -> 0/1 by yes-level
+## (exactly as MAIN's load-data). lid_des <-> p39 crosswalk is positional.
+gen_df <- combo[combo$setting == "General salaried", , drop = FALSE]
+hosp_df <- combo[combo$setting == "Hospital HCW", , drop = FALSE]
+stopifnot("psicotrop" %in% names(gen_raw), "psicotrop" %in% names(hosp_raw))
+gen_df$psicotrop <- gen_raw$psicotrop[gen_df$.row_id]
+hosp_df$psicotrop <- hosp_raw$psicotrop[hosp_df$.row_id]
+stopifnot(identical(gen_df$.w, as_num(gen_raw$weight)[gen_df$.row_id]),
+          all(hosp_df$.w == 1))
+
+## Standardise job_sat to z-scores within each sample (mean 0, SD 1) so the OR
+## is "per 1-SD increase" and is directly comparable across samples for the ROR.
+## The general scale (satis 0-20) and hospital scale (sum p41_1..5) may differ.
+gen_df$job_sat  <- as.numeric(scale(gen_df$job_sat))
+hosp_df$job_sat <- as.numeric(scale(hosp_df$job_sat))
+
+## Per-group invariant posteriors + modal class (group order = levels(combo$setting)).
+gl        <- levels(combo$setting)                 # c("General salaried", "Hospital HCW")
+post_list <- get_post_list(g4_inv)
+.nm       <- names(post_list)
+pick_grp  <- function(lbl, i)
+  if (!is.null(.nm) && all(nzchar(.nm)) && length(.nm) == length(post_list))
+    post_list[[which(.nm == lbl)]] else post_list[[i]]
+post_gen  <- pick_grp(gl[1], 1L); modal_gen  <- max.col(post_gen)
+post_hosp <- pick_grp(gl[2], 2L); modal_hosp <- max.col(post_hosp)
+
+## Alignment guard: covariate rows MUST match the posterior rows exactly.
+stopifnot(nrow(post_gen)  == nrow(gen_df),
+          nrow(post_hosp) == nrow(hosp_df))
+
+message(sprintf("Reference class = raw glca index C%d = manuscript C%d (%s).",
+                ref_class, ms_num[ref_class], ms_lab[ref_class]))
+```
+
+```{r}
+#| label: assoc-s3-or-long
+#| results: "hold"
+#| cache: false
+## cache OFF: ml3step is cheap (seconds); a cached table would keep stale ORs if
+## g4_inv / the covariates change upstream (knitr keys only on this chunk's code).
+
+unadjusted_models <- list()
+samples <- list(
+  general  = list(cov = gen_df,  post = post_gen,  modal = modal_gen),
+  hospital = list(cov = hosp_df, post = post_hosp, modal = modal_hosp))
+
+## covariate x class x sample -> OR/lo/hi, plus se = (log hi - log lo)/(2*1.96),
+## which exactly recovers the log-OR standard error from the Wald CI. Reference =
+## the shared strongest-constructive class (ref_class), applied identically in both samples.
+or_long <- purrr::map_dfr(names(samples), function(smp) {
+  S <- samples[[smp]]
+  purrr::map_dfr(cov_keys, function(key) {
+    z  <- S$cov[[key]]
+    zt <- z[!is.na(z)]
+    if (length(zt) == 0L || length(unique(zt)) < 2L) {              # all-NA or constant
+      message(sprintf("[skip] %s / %s: covariable constante o toda-NA.", smp, key))
+      return(NULL)
+    }
+    m <- tryCatch(
+      ml3step_ref(z = z, post = S$post, modal = S$modal, sw = S$cov$.w, ref = ref_class),
+      error = function(e) {
+        message(sprintf("[skip] %s / %s: ml3step fallo (%s).", smp, key, conditionMessage(e)))
+        NULL
+      })
+    if (is.null(m)) return(NULL)
+    unadjusted_models[[paste(smp, key, sep = "/")]] <<- m
+    m$ors |>
+      dplyr::transmute(
+        covariate = key,
+        class     = class,                 # ORIGINAL non-reference class index
+        label     = ms_lab[class],         # canonical manuscript label
+        sample    = smp,
+        OR = OR, lo = lo, hi = hi,
+        se = (log(hi) - log(lo)) / (2 * 1.96))
+  })
+})
+or_long
+```
+
+```{r}
+#| label: assoc-s3-or-wide
+#| results: "hold"
+
+## Wide OR (95% CI) table: rows = covariate x non-reference profile;
+## columns = general vs hospital.
+or_wide <- or_long |>
+  dplyr::mutate(
+    Covariate = factor(unname(cov_labs[covariate]), levels = unname(cov_labs)),
+    Class     = paste0("C", ms_num[class], " ", label),
+    cell      = sprintf("%.2f (%.2f-%.2f)", OR, lo, hi)) |>
+  dplyr::select(Covariate, Class, class, sample, cell) |>
+  tidyr::pivot_wider(names_from = sample, values_from = cell)
+
+## Guard: keep both columns even if one sample produced no fits.
+for (col in c("general", "hospital"))
+  if (!col %in% names(or_wide)) or_wide[[col]] <- NA_character_
+
+or_wide <- or_wide |>
+  dplyr::arrange(Covariate, class) |>
+  dplyr::transmute(Covariate, Class,
+                   `OR (95% CI) - General`  = general,
+                   `OR (95% CI) - Hospital` = hospital)
+
+or_wide |>
+  knitr::kable("markdown",
+    caption = sprintf(
+      "Section 3. Per-sample ML three-step odds ratios (95%% CI) for each Table S1 covariate, by shared latent profile (reference = C%d %s), general survey vs hospital sample. In both samples 1 = exposed; both use the invariant four-class measurement model.",
+      ms_num[ref_class], ms_lab[ref_class]))
+```
+
+# 4. Effect modification by sample: ratio of odds ratios (ROR)
+
+The previous sections established *what* the shared profiles are (invariant
+four-class model) and produced the *per-sample* covariate ORs. This section answers
+a distinct question: **is the association between each risk covariate and profile
+membership the *same* in the two samples, or is it *modified* by sample (general
+salaried vs hospital healthcare workers)?**
+
+Because the profiles are estimated under measurement invariance
+(`measure.inv = TRUE`), class *k* denotes the **same** latent profile in both
+samples, so the shared strongest-constructive class is a common reference and the non-reference
+odds ratios (from the bias-adjusted ML three-step, one covariate at a time, fitted
+*within each sample's* posterior slice of the shared model) are directly
+comparable. For every covariate × profile contrast we combine the two samples' ORs
+into a **ratio of odds ratios (ROR)** with a Wald test of log ROR:
+
+- From each sample's `ml3step` fit we take the OR and its 95% CI (`lo`, `hi`) for
+  each non-reference class and back out the log-OR standard error,
+  `SE = (log(hi) - log(lo)) / (2 x 1.96)` — an exact inversion because `ml3step`
+  builds the CI as `exp(b +/- 1.96 x se)`.
+- `logROR = log(OR_hosp) - log(OR_gen)`; `SE_logROR = sqrt(SE_gen^2 + SE_hosp^2)`;
+  `ROR = exp(logROR)` with 95% CI `exp(logROR +/- 1.96 x SE_logROR)`.
+- Wald `p = 2 x pnorm(-|logROR / SE_logROR|)`. Retired 2026-10-18: Cochran's Q
+  (equal to the squared Wald statistic with two samples) and I² are no longer reported.
+
+A small Wald *p*-value flags a covariate->profile association that is **modified by
+sample** — effect modification / interaction on the (relative) OR scale. This
+pairwise ROR is exactly the two-group instance of the interaction contrast in
+**Kaufman & MacLehose (2013), "Which of These Things Is Not like the Others?"**.
+
+## 4.1 Reading the ROR (Kaufman & MacLehose, 2013)
+
+Three cautions travel with every ROR below and should be stated in the manuscript:
+
+1. **Relative scale, not additive.** The ROR test is homogeneity on the
+   *multiplicative* odds-ratio scale. Relative-scale homogeneity does **not** imply
+   additive (risk-difference) homogeneity, and vice versa. `ROR = 1` means "no
+   effect modification *on the OR scale*", nothing more.
+2. **Multiplicity.** With 8 covariates × 3 non-reference profiles there are up to
+   **24 ROR tests**. At alpha = .05 roughly one "significant" heterogeneity is
+   expected by chance alone, so the flags are reported **descriptively / with a
+   multiplicity caveat**, not as confirmatory tests.
+3. **Small toxic-class cells.** The destructive/ambivalent profile is small in both
+   samples; exposed cells inside it are sparse, which inflates the SEs, widens the
+   ROR CI and *lowers* the power of the test. Those contrasts are read **directionally**
+   (sign and magnitude of the ROR) rather than by their *p*-value.
+
+```{r}
+#| label: assoc-p2-or-long
+#| results: "hold"
+
+## Per-group posteriors of the INVARIANT shared 4-class model, split combo the
+## same way glca did (within-group row order preserved) so covariate/weight vectors
+## align row-for-row with each group's posterior matrix.
+gl        <- levels(combo$setting)               # c("General salaried","Hospital HCW")
+post_list <- get_post_list(g4_inv); names(post_list) <- gl
+combo_by  <- split(combo, combo$setting)
+sw_of     <- function(df) if (".w" %in% names(df)) as.numeric(df$.w) else rep(1, nrow(df))
+
+## Guard: the harmonised covariate columns must exist on `combo` (Section 1).
+miss_cov <- setdiff(cov_keys, names(combo))
+if (length(miss_cov))
+  stop("`combo` is missing harmonised 0/1 covariate columns: ",
+       paste(miss_cov, collapse = ", "))
+
+## `or_long` (per-sample ML three-step ORs vs the shared reference) is produced in
+## Section 3, with schema: covariate = key, sample in {general, hospital}, class =
+## ORIGINAL non-reference index. Rebuild defensively from `combo` if absent, using
+## the SAME reference (ref_class) and ml3step_ref() so schema/reference match.
+if (!exists("or_long")) {
+  smp_tag <- c("General salaried" = "general", "Hospital HCW" = "hospital")
+  or_long <- purrr::map_dfr(gl, function(g) {
+    P <- as.matrix(post_list[[g]]); d <- combo_by[[g]]
+    stopifnot(nrow(P) == nrow(d))
+    md <- max.col(P); sw <- sw_of(d)
+    purrr::map_dfr(cov_keys, function(key) {
+      m <- tryCatch(ml3step_ref(z = d[[key]], post = P, modal = md, sw = sw, ref = ref_class),
+                    error = function(e) NULL)
+      if (is.null(m)) return(NULL)
+      m$ors |>
+        dplyr::transmute(covariate = key, class = class, label = ms_lab[class],
+                         sample = unname(smp_tag[g]),
+                         OR = OR, lo = lo, hi = hi,
+                         se = (log(hi) - log(lo)) / (2 * 1.96))
+    })
+  })
+}
+stopifnot(all(c("sample", "covariate", "class", "OR", "lo", "hi") %in% names(or_long)))
+```
+
+```{r}
+#| label: assoc-p2-ror
+#| results: "hold"
+
+## Recover each log-OR SE from the reported CI. Use 1.96 EXACTLY (not qnorm(.975))
+## so it inverts ml3step's own exp(b +/- 1.96*se) with no rounding drift.
+z <- 1.96
+
+or_std <- or_long |>
+  dplyr::mutate(
+    grp   = dplyr::case_when(grepl("^gen",  sample, ignore.case = TRUE) ~ "gen",
+                             grepl("^hosp", sample, ignore.case = TRUE) ~ "hosp",
+                             TRUE ~ tolower(sample)),
+    logOR = log(OR),
+    seLog = (log(hi) - log(lo)) / (2 * z))
+
+gen_side  <- or_std |> dplyr::filter(grp == "gen") |>
+  dplyr::select(covariate, class, OR_gen = OR, lo_gen = lo, hi_gen = hi,
+                logOR_gen = logOR, seLog_gen = seLog)
+hosp_side <- or_std |> dplyr::filter(grp == "hosp") |>
+  dplyr::select(covariate, class, OR_hosp = OR, lo_hosp = lo, hi_hosp = hi,
+                logOR_hosp = logOR, seLog_hosp = seLog)
+
+## logROR = log(OR_hosp) - log(OR_gen); for k = 2 studies Cochran Q reduces to
+## (logROR / SE_logROR)^2 ~ chi-square(df = 1); I2 = max(0, (Q - 1)/Q) * 100.
+ror_tbl <- dplyr::inner_join(gen_side, hosp_side, by = c("covariate", "class")) |>
+  dplyr::mutate(
+    logROR   = logOR_hosp - logOR_gen,
+    seLogROR = sqrt(seLog_gen^2 + seLog_hosp^2),
+    ROR      = exp(logROR),
+    ROR_lo   = exp(logROR - z * seLogROR),
+    ROR_hi   = exp(logROR + z * seLogROR),
+    ## 2026-10-18 retired (Andres): Cochran Q and I2 removed from all reporting;
+    ## with two samples Q = (logROR/SE)^2 only duplicates the Wald test of log ROR.
+    # Q        = (logROR / seLogROR)^2,
+    # df       = 1L,
+    # I2       = pmax(0, (Q - 1) / Q) * 100,
+    p_wald   = 2 * stats::pnorm(-abs(logROR / seLogROR)),
+    Covariate = unname(cov_labs[covariate]),
+    Profile   = ms_contrast(class, ref_class)) |>   # manuscript numbering
+  dplyr::arrange(match(covariate, cov_keys), ms_num[class]) |>
+  ## Multiple-comparison corrections across all contrasts in this table.
+  ## Holm: step-down FWER (more powerful than Bonferroni, controls familywise error).
+  ## BH: Benjamini-Hochberg FDR (controls expected proportion of false discoveries).
+  dplyr::mutate(
+    p_holm = p.adjust(p_wald, method = "holm"),
+    q_BH   = p.adjust(p_wald, method = "BH"),
+    flag   = dplyr::case_when(
+      !is.na(q_BH) & q_BH < 0.05 ~ "*†",   # nominal AND BH-FDR
+      !is.na(p_wald)  & p_wald  < 0.05 ~ "*",           # nominal only
+      TRUE ~ ""))
+
+## ---- main table: 'Effect modification by sample' -------------------------
+fmt_ci <- function(est, lo, hi) sprintf("%.2f (%.2f–%.2f)", est, lo, hi)
+fmt_p  <- function(p) ifelse(is.na(p), "—", ifelse(p < 0.001, "<0.001", sprintf("%.3f", p)))
+
+em_tbl <- ror_tbl |>
+  dplyr::transmute(
+    Covariate              = Covariate,
+    Profile                = Profile,
+    `OR general (95% CI)`  = fmt_ci(OR_gen,  lo_gen,  hi_gen),
+    `OR hospital (95% CI)` = fmt_ci(OR_hosp, lo_hosp, hi_hosp),
+    `ROR (95% CI)`         = paste0(fmt_ci(ROR, ROR_lo, ROR_hi), flag),
+    # `Cochran Q (df=1)`     = sprintf("%.2f", Q),  # 2026-10-18 retired: Q/I2 removed
+    `p-value`              = fmt_p(p_wald),
+    `p (Holm)`             = fmt_p(p_holm),
+    `q (BH)`               = fmt_p(q_BH))
+    # `I² (%)`               = sprintf("%.0f", I2))  # 2026-10-18 retired: Q/I2 removed
+
+## kableExtra for HTML: stripe rows, bold ROR cell when flagged, footnote.
+em_tbl |>
+  kableExtra::kbl(
+    format  = "html",
+    caption = sprintf(
+      "Table S7. Effect modification by sample (Kaufman &amp; MacLehose pairwise interaction contrast). ML three-step OR (95%% CI) per covariate &times; profile in each sample, ROR = OR(hospital)/OR(general) with 95%% CI, Wald p-value for log ROR, Holm-adjusted p and Benjamini-Hochberg q. Reference = C%d %s.",
+      ms_num[ref_class], ms_lab[ref_class]),
+    align   = c("l","l","r","r","r","r","r","r"),
+    escape  = FALSE) |>
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped","hover","condensed"),
+    full_width = FALSE, font_size = 12) |>
+  kableExtra::column_spec(5, bold = ror_tbl$flag != "") |>
+  kableExtra::footnote(
+    general = paste0(
+      "* nominal p &lt; 0.05; *&dagger; nominal p &lt; 0.05 AND BH q &lt; 0.05. ",
+      "p&nbsp;(Holm): step-down Bonferroni (controls familywise error rate; more powerful than Bonferroni). ",
+      "q&nbsp;(BH): Benjamini-Hochberg false discovery rate (controls expected proportion of false rejections). ",
+      "Both corrections applied across all ", nrow(ror_tbl), " contrasts. ",
+      "With 24 tests ~1 nominal flag is expected by chance. ",
+      "Small hospital class (C2 &asymp;3.6%) widens CIs and lowers power for those rows."),
+    general_title = "Note. ",
+    footnote_as_chunk = TRUE,
+    escape = FALSE)
+```
+
+```{r}
+#| label: assoc-p2-fig-ror
+#| fig-width: 10
+#| fig-height: 8
+#| results: "hold"
+
+## Forest of the ROR (log x-axis, reference line at 1), faceted by covariate and
+## coloured by profile contrast; horizontal bars = 95% CI. Free x per panel keeps
+## small-cell contrasts with very wide CIs legible. Profile levels are built from
+## the actual non-reference classes so the figure follows the data-driven reference.
+prof_levels <- unique(ror_tbl$class)[order(ms_num[unique(ror_tbl$class)])]
+prof_labs   <- ms_contrast(prof_levels, ref_class)   # manuscript numbering
+pal_base    <- c("#0072B2", "#009E73", "#D55E00", "#CC79A7", "#E69F00", "#56B4E9")
+prof_pal    <- setNames(pal_base[seq_along(prof_labs)], prof_labs)
+
+ror_plot_df <- ror_tbl |>
+  dplyr::mutate(
+    Profile   = factor(Profile, levels = rev(prof_labs)),
+    Covariate = factor(Covariate, levels = unname(cov_labs)))
+
+p_ror <- ggplot(ror_plot_df, aes(ROR, Profile, colour = Profile)) +
+  geom_vline(xintercept = 1, linetype = "dashed", colour = "grey40") +
+  geom_errorbarh(aes(xmin = ROR_lo, xmax = ROR_hi), height = 0.18) +
+  geom_point(size = 2.4) +
+  facet_wrap(~ Covariate, ncol = 2, scales = "free_x") +
+  scale_x_log10() +
+  scale_colour_manual(values = prof_pal, breaks = prof_labs) +
+  labs(x = "Ratio of odds ratios (hospital / general), log scale", y = NULL,
+       colour = "Profile contrast",
+       title = "Effect modification by sample: ROR of covariate -> profile associations",
+       subtitle = "ROR = OR(hospital) / OR(general); dashed line at ROR = 1 (no modification)") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "top", panel.grid.minor = element_blank())
+p_ror
+ggsave("Figure_P2_ROR.png", p_ror, width = 10, height = 8, dpi = 300, bg = "white")
+```
+
+## 4.2 Descriptive backdrop: what each sample looks like
+
+```{r}
+#| label: assoc-p2-both-samples
+#| results: "hold"
+
+## (c1) DESCRIPTIVE: survey-weighted exposure prevalence (%) of each covariate,
+## by sample. General uses the survey weight (.w); the hospital .dta carries no
+## comparable weight, so .w defaults to 1 there (its column is effectively raw %).
+wpct01 <- function(x, w) {
+  x <- as.numeric(x); ok <- !is.na(x)
+  if (!any(ok)) return(NA_real_)
+  100 * sum(w[ok] * x[ok]) / sum(w[ok])
+}
+prev_cov <- purrr::imap_dfr(cov_labs, function(lab, key) {
+  g <- combo_by[["General salaried"]]; h <- combo_by[["Hospital HCW"]]
+  tibble::tibble(
+    Covariate = lab,
+    `General salaried (%)` = round(wpct01(g[[key]], sw_of(g)), 1),
+    `Hospital HCW (%)`     = round(wpct01(h[[key]], sw_of(h)), 1))
+})
+prev_cov |>
+  knitr::kable("markdown",
+    caption = "Both-samples description (1): weighted prevalence (%) of the 7 exposures by sample (1 = exposed). General salaried is survey-weighted; Hospital HCW is unweighted (no survey weight in the .dta). This is the raw exposure mix in which any effect modification sits.")
+
+## (c2) DESCRIPTIVE: shared-profile prevalence (%) by sample, from the invariant
+## 4-class model (same object used for the ORs), via group_prev().
+prev_prof <- as.data.frame(round(100 * group_prev(g4_inv, gl), 1))
+prev_prof$Sample <- rownames(prev_prof)
+prev_prof <- prev_prof |> dplyr::select(Sample, dplyr::everything())
+prev_prof |>
+  knitr::kable("markdown",
+    caption = "Both-samples description (2): prevalence (%) of the SHARED latent profiles C1-C4 by sample (invariant four-class model). Rows are the two samples; a different profile mix reshapes the marginal cells that feed each sample's covariate ORs.")
+```
+
+```{r}
+#| label: assoc-p2-km-interpretation
+#| results: "asis"
+
+## Dynamic multiplicity read-out (Kaufman & MacLehose): how many of the contrasts
+## are flagged vs how many are expected by chance at alpha = .05.
+n_contrast <- sum(!is.na(ror_tbl$p_wald))
+n_flag     <- sum(ror_tbl$flag == "*", na.rm = TRUE)
+exp_false  <- 0.05 * n_contrast
+flagged    <- ror_tbl |> dplyr::filter(flag == "*") |>
+  dplyr::mutate(lab = sprintf("%s (C%d vs C%d): ROR = %.2f, p = %s",
+                Covariate, ms_num[class], ms_num[ref_class], ROR,
+                ifelse(p_wald < 0.001, "<0.001", sprintf("%.3f", p_wald))))
+
+cat(sprintf(paste0(
+  "- **Contrasts tested:** %d covariate x profile ROR Wald tests (up to 8 covariates x 3 non-reference profiles).\n",
+  "- **Flagged (p < 0.05):** %d of %d; **~%.1f** false positives are expected by chance alone at alpha = 0.05, so isolated flags are read descriptively, not as confirmatory interactions.\n",
+  "%s",
+  "- **ROR = 1 means no modification on the OR scale.** Relative-scale homogeneity here does not license additive (risk-difference) homogeneity, and vice versa (Kaufman & MacLehose, 2013).\n",
+  "- **Small toxic-class cells** widen the OR/ROR CIs and sap power; those contrasts are read directionally (sign and size of the ROR), not by their p-value.\n"),
+  n_contrast, n_flag, n_contrast, exp_false,
+  if (nrow(flagged)) paste0("- **Which:** ", paste(flagged$lab, collapse = "; "), ".\n")
+  else "- **Which:** none reached p < 0.05.\n"))
+```
+
+# Export: Table S7 values for the manuscript build
+
+The manuscript session has no R, so the **full 21-row Part 2 ROR table
+(Table S7)** must travel as values. Two files are written: the formatted table
+exactly as displayed above (ready for the table builder), and the raw numeric
+columns (point estimates and CI bounds) so cells can be re-formatted to house
+style without re-parsing strings. `n_init` is stamped on every row so a draft
+export (200 starts) cannot be mistaken for the reportable one (4000).
+
+```{r}
+#| label: assoc-p2-export-tableS7
+#| results: "hold"
+
+readr::write_csv(dplyr::mutate(em_tbl, n_init = n_init), "tableS7_ror_formatted.csv")
+ror_tbl |>
+  dplyr::select(Covariate, covariate, class, Profile,
+                OR_gen, lo_gen, hi_gen, OR_hosp, lo_hosp, hi_hosp,
+                ROR, ROR_lo, ROR_hi, p_wald, flag) |>  # 2026-10-18: Q, df, I2 retired
+  dplyr::mutate(n_init = n_init) |>
+  readr::write_csv("tableS7_ror_values.csv")
+cat(sprintf("Wrote tableS7_ror_formatted.csv + tableS7_ror_values.csv (%d contrasts, n_init = %d).\n",
+            nrow(ror_tbl), n_init))
+```
+
+# Sensitivity 1. Historical adjustment set with job satisfaction
+
+The unadjusted per-sample ORs in Section 3 treat each covariate independently.
+This section fits a single **mutually adjusted** ML three-step model per sample,
+entering all 8 covariates simultaneously. Because the hospital sample has a small
+class (C2 ≈ 3.6 %), which can cause near-separation and coefficient inflation, the
+estimator uses a ridge (L2) penalty as fallback: the unpenalised model (λ = 0) is
+attempted first; if any |β| > 5 or the Hessian is singular, the model is re-fitted
+with λ = 0.1. At λ = 0 the estimator is identical to the standard ML three-step
+(Vermunt 2010); at λ > 0 coefficients shrink toward zero — ORs remain interpretable
+but are slightly conservative.
+
+```{r}
+#| label: assoc-p2-adj-fit
+#| results: "hold"
+
+## Build the 8-column predictor matrix for each sample (complete-case on items;
+## NAs in individual covariates are allowed - ml3step_multi drops rows with any NA
+## in Z, so each sample uses the per-model complete case set).
+gen_df_adj  <- combo[combo$setting == "General salaried", ]
+hosp_df_adj <- combo[combo$setting == "Hospital HCW",    ]
+
+## Job satisfaction: standardise within each sample's analysis set (same as Part 3).
+gen_df_adj$job_sat  <- as.numeric(scale(gen_df_adj$job_sat))
+hosp_df_adj$job_sat <- as.numeric(scale(hosp_df_adj$job_sat))
+
+Z_gen  <- as.matrix(gen_df_adj[ , cov_keys])
+Z_hosp <- as.matrix(hosp_df_adj[, cov_keys])
+
+## Helper: fit with lambda=0; if |b|>5 or hessian singular, retry with lambda=0.1.
+stopifnot(exists("fit_adj"))
+
+adj_gen  <- fit_adj(Z_gen, post_g, modal_g, sw = gen_df_adj$.w,
+                    ref = ref_class, label = "General (legacy with job satisfaction)")
+adj_hosp <- fit_adj(Z_hosp, post_h, modal_h, sw = hosp_df_adj$.w,
+                    ref = ref_class, label = "Hospital (legacy with job satisfaction)")
+```
+
+```{r}
+#| label: assoc-p2-adj-table
+#| results: "hold"
+
+cov_labs_adj <- c(
+  eri           = "Effort-reward imbalance",
+  auditc_hazard = "Hazardous alcohol use (AUDIT-C)",
+  no_union      = "No union organisation",
+  naq_frequent  = "Frequent negative acts (NAQ)",
+  bully_self    = "Self-labelled bullying",
+  sex_harass    = "Sexual harassment",
+  sex_woman     = "Female sex",
+  job_sat       = "Job satisfaction (per 1-SD)"
+)
+
+fmt_ci_adj <- function(or, lo, hi) sprintf("%.2f (%.2f–%.2f)", or, lo, hi)
+z196 <- 1.96
+
+## ml3step_multi stores b (log-OR) and se per row; use them directly for ROR math
+## to avoid rounding drift from back-transforming the CI.
+gen_adj_side  <- adj_gen$ors  |> dplyr::select(covariate, class,
+  OR_gen = OR, lo_gen = lo, hi_gen = hi, b_gen = b, se_gen = se)
+hosp_adj_side <- adj_hosp$ors |> dplyr::select(covariate, class,
+  OR_hosp = OR, lo_hosp = lo, hi_hosp = hi, b_hosp = b, se_hosp = se)
+
+adj_ror <- dplyr::inner_join(gen_adj_side, hosp_adj_side,
+                             by = c("covariate", "class")) |>
+  dplyr::mutate(
+    logROR   = b_hosp - b_gen,
+    seLogROR = sqrt(se_gen^2 + se_hosp^2),
+    ROR      = exp(logROR),
+    ROR_lo   = exp(logROR - z196 * seLogROR),
+    ROR_hi   = exp(logROR + z196 * seLogROR),
+    ## 2026-10-18 retired (Andres): Cochran Q and I2 removed from all reporting;
+    ## with two samples Q = (logROR/SE)^2 only duplicates the Wald test of log ROR.
+    # Q        = (logROR / seLogROR)^2,
+    # I2       = pmax(0, (Q - 1) / Q) * 100,
+    p_wald   = 2 * stats::pnorm(-abs(logROR / seLogROR)),
+    Covariate = unname(cov_labs_adj[covariate]),
+    Profile   = ms_contrast(class, ref_class)   # manuscript numbering
+  ) |>
+  dplyr::arrange(match(covariate, cov_keys), ms_num[class]) |>
+  dplyr::mutate(
+    p_holm = p.adjust(p_wald, method = "holm"),
+    q_BH   = p.adjust(p_wald, method = "BH"),
+    flag   = dplyr::case_when(
+      !is.na(q_BH) & q_BH < 0.05 ~ "*†",
+      !is.na(p_wald)  & p_wald  < 0.05 ~ "*",
+      TRUE ~ ""))
+
+fmt_p_adj <- function(p) ifelse(is.na(p), "—", ifelse(p < 0.001, "<0.001", sprintf("%.3f", p)))
+
+adj_em_tbl <- adj_ror |>
+  dplyr::transmute(
+    Covariate,
+    Profile,
+    `OR general (95% CI)`  = fmt_ci_adj(OR_gen,  lo_gen,  hi_gen),
+    `OR hospital (95% CI)` = fmt_ci_adj(OR_hosp, lo_hosp, hi_hosp),
+    `ROR (95% CI)`         = paste0(fmt_ci_adj(ROR, ROR_lo, ROR_hi), flag),
+    # `Cochran Q (df=1)`     = sprintf("%.2f", Q),  # 2026-10-18 retired: Q/I2 removed
+    `p-value`              = fmt_p_adj(p_wald),
+    `p (Holm)`             = fmt_p_adj(p_holm),
+    `q (BH)`               = fmt_p_adj(q_BH)
+    # `I² (%)`               = sprintf("%.0f", I2)  # 2026-10-18 retired: Q/I2 removed
+  )
+
+adj_em_tbl |>
+  kableExtra::kbl(
+    format  = "html",
+    caption = sprintf(
+      "Table S8. Effect modification by sample — adjusted ML three-step ORs (95%% CI) mutually adjusting for all 8 covariates, ROR = OR(hospital)/OR(general), Wald p for log ROR, Holm p and BH q. Reference = C%d %s. General: &lambda;=%.1f, n=%d/%d. Hospital: &lambda;=%.1f, n=%d/%d.",
+      ms_num[ref_class], ms_lab[ref_class],
+      adj_gen$lambda,  adj_gen$n_complete,  adj_gen$n_total,
+      adj_hosp$lambda, adj_hosp$n_complete, adj_hosp$n_total),
+    align  = c("l","l","r","r","r","r","r","r"),
+    escape = FALSE) |>
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped","hover","condensed"),
+    full_width = FALSE, font_size = 12) |>
+  kableExtra::column_spec(5, bold = adj_ror$flag != "") |>
+  kableExtra::footnote(
+    general = paste0(
+      "* nominal p &lt; 0.05; *&dagger; nominal p &lt; 0.05 AND BH q &lt; 0.05. ",
+      "p&nbsp;(Holm): step-down FWER correction. q&nbsp;(BH): Benjamini-Hochberg FDR. ",
+      "Both applied across all ", nrow(adj_ror), " contrasts. ",
+      "&lambda; = 0: standard ML three-step; &lambda; = 0.1: L2 ridge fallback for near-separation. ",
+      "Job satisfaction z-standardised within each sample (OR per 1-SD). ",
+      "Small hospital class (C2 &asymp;3.6%) widens CIs and lowers power for those rows."),
+    general_title = "Note. ",
+    footnote_as_chunk = TRUE,
+    escape = FALSE)
+```
+
+# Reusable adjusted comparison outputs
+
+These aggregate files preserve full numeric precision for future tables. The raw
+class index and manuscript profile label are retained together. Model caches are
+private because they contain participant responses and posterior probabilities.
+
+```{r}
+#| label: assoc-p2-export-adjusted
+#| results: "hold"
+readr::write_csv(dplyr::mutate(adj_ror, n_init = n_init),
+                 "tableS8_adjusted_ror_values.csv")
+readr::write_csv(dplyr::mutate(adj_em_tbl, n_init = n_init),
+                 "tableS8_adjusted_ror_formatted.csv")
+readr::write_csv(tibble::tibble(raw_class = seq_along(ms_num),
+                 manuscript_class = ms_num, manuscript_label = ms_lab,
+                 is_reference = seq_along(ms_num) == ref_class), "part2_class_key.csv")
+```
+
+# Session information
+
+```{r}
+#| label: assoc-session-info
+#| results: "hold"
+sessionInfo()
+```
+
+
+
+# Sensibilidad: retirar satisfacción laboral
+
+Los objetos de medición y covariables de las secciones anteriores se reutilizan
+explícitamente. Los ajustes de 8 y 7 covariables se guardan juntos para comparar
+sus conjuntos de casos completos y la penalización aplicada.
+
+# 2. Drop job satisfaction from the adjustment set
+
+```{r}
+#| label: nojob-drop-cov
+#| results: "hold"
+
+## Re-materialise the config in the global environment. Safe from here on: the
+## only chunk that clears globalenv is Part 2's `setup`, which has already run.
+DROP_COV <- "job_sat"
+
+stopifnot(DROP_COV %in% cov_keys)
+
+cov_keys_full <- cov_keys                       # keep the 8-covariate vector
+cov_keys      <- setdiff(cov_keys_full, DROP_COV)   # 7 covariates from here on
+
+cat("Adjustment set reduced from", length(cov_keys_full), "to", length(cov_keys),
+    "covariates.\n")
+cat("Retained:", paste(cov_keys, collapse = ", "), "\n")
+```
+
+# 2b. Manuscript class numbering
+
+`glca` returns the classes in an arbitrary order, so the raw index printed by the
+inherited code (`C2 vs C1`) has no substantive meaning and had to be renumbered by
+hand for the manuscript. That manual step is where a table can end up contradicting
+Table 2. `canonical_class_numbering.R` derives the manuscript numbering from the
+behavioral signature of each class (C1 moderately constructive, C2 disengaged,
+C3 constructive and the reference, C4 ambivalent/intermittently destructive) and
+stops if the reference used by the three-step models is not the constructive class.
+Every table below prints that numbering, so its rows can be pasted as they are.
+
+```{r}
+#| label: nojob-canonical-numbering
+#| results: "hold"
+
+source("../R/canonical_class_numbering.R")
+
+stopifnot(exists("ms_num"), exists("ms_lab"), exists("ms_contrast"),
+          ms_num[ref_class] == 3L)
+cat(sprintf("Reference: raw C%d -> manuscript C%d (%s).\n",
+            ref_class, ms_num[ref_class], ms_lab[ref_class]))
+```
+
+# 3. Adjusted fit, 7 covariates {#adjusted-7}
+
+Identical to Part 2's `p2-adj-fit`: same samples, same invariant posteriors, same
+`ml3step_multi()` with `lambda = 0` and the ridge fallback at `lambda = 0.1` on
+near-separation. The only difference is that `Z` now has 7 columns.
+
+```{r}
+#| label: nojob-adj-fit-7
+#| results: "hold"
+
+gen_df_adj  <- combo[combo$setting == "General salaried", ]
+hosp_df_adj <- combo[combo$setting == "Hospital HCW",    ]
+
+## NOTE: no job_sat standardisation here - the covariate is gone. Every other
+## covariate is already 0/1 (1 = exposed) from Part 2's harmonisation.
+
+Z_gen  <- as.matrix(gen_df_adj[ , cov_keys])
+Z_hosp <- as.matrix(hosp_df_adj[, cov_keys])
+
+stopifnot(exists("fit_adj"))
+
+adj_gen7  <- fit_adj(Z_gen, post_g, modal_g, sw = gen_df_adj$.w,
+                     ref = ref_class, label = "General (legacy 7 covariates)")
+adj_hosp7 <- fit_adj(Z_hosp, post_h, modal_h, sw = hosp_df_adj$.w,
+                     ref = ref_class, label = "Hospital (legacy 7 covariates)")
+```
+
+# 4. Table 4 without job satisfaction {#table4-nojobsat}
+
+```{r}
+#| label: nojob-adj-table-7
+#| results: "hold"
+
+cov_labs_adj <- c(
+  eri           = "Effort-reward imbalance",
+  auditc_hazard = "Hazardous alcohol use (AUDIT-C)",
+  no_union      = "Absence of union",
+  naq_frequent  = "Frequent negative acts (NAQ)",
+  bully_self    = "Self-labeled bullying",
+  sex_harass    = "Sexual harassment",
+  sex_woman     = "Female sex"
+)
+
+fmt_ci_adj <- function(or, lo, hi) sprintf("%.2f (%.2f-%.2f)", or, lo, hi)
+z196 <- 1.96
+
+gen_adj_side  <- adj_gen7$ors  |> dplyr::select(covariate, class,
+  OR_gen = OR, lo_gen = lo, hi_gen = hi, b_gen = b, se_gen = se)
+hosp_adj_side <- adj_hosp7$ors |> dplyr::select(covariate, class,
+  OR_hosp = OR, lo_hosp = lo, hi_hosp = hi, b_hosp = b, se_hosp = se)
+
+adj_ror7 <- dplyr::inner_join(gen_adj_side, hosp_adj_side,
+                              by = c("covariate", "class")) |>
+  dplyr::mutate(
+    logROR   = b_hosp - b_gen,
+    seLogROR = sqrt(se_gen^2 + se_hosp^2),
+    ROR      = exp(logROR),
+    ROR_lo   = exp(logROR - z196 * seLogROR),
+    ROR_hi   = exp(logROR + z196 * seLogROR),
+    ## 2026-10-18 retired (Andres): Cochran Q and I2 removed from all reporting;
+    ## with two samples Q = (logROR/SE)^2 only duplicates the Wald test of log ROR.
+    # Q        = (logROR / seLogROR)^2,
+    # I2       = pmax(0, (Q - 1) / Q) * 100,
+    p_wald   = 2 * stats::pnorm(-abs(logROR / seLogROR)),
+    Covariate = unname(cov_labs_adj[covariate]),
+    Profile   = ms_contrast(class, ref_class)   # manuscript numbering, not the raw index
+  ) |>
+  dplyr::arrange(match(covariate, cov_keys), ms_num[class]) |>
+  dplyr::mutate(
+    p_holm = p.adjust(p_wald, method = "holm"),
+    q_BH   = p.adjust(p_wald, method = "BH"),
+    flag   = dplyr::case_when(
+      !is.na(q_BH) & q_BH < 0.05 ~ "*+",
+      !is.na(p_wald)  & p_wald  < 0.05 ~ "*",
+      TRUE ~ ""))
+
+fmt_p_adj <- function(p) ifelse(is.na(p), "-", ifelse(p < 0.001, "<0.001", sprintf("%.3f", p)))
+
+adj_em_tbl7 <- adj_ror7 |>
+  dplyr::transmute(
+    Covariate,
+    Contrast               = Profile,
+    `OR general (95% CI)`  = fmt_ci_adj(OR_gen,  lo_gen,  hi_gen),
+    `OR hospital (95% CI)` = fmt_ci_adj(OR_hosp, lo_hosp, hi_hosp),
+    `ROR (95% CI)`         = paste0(fmt_ci_adj(ROR, ROR_lo, ROR_hi), flag),
+    # `Cochran Q`            = sprintf("%.2f", Q),  # 2026-10-18 retired: Q/I2 removed
+    `p`                    = fmt_p_adj(p_wald),
+    `p (Holm)`             = fmt_p_adj(p_holm),
+    `q (BH)`               = fmt_p_adj(q_BH)
+    # `I2 (%)`               = sprintf("%.0f", I2)  # 2026-10-18 retired: Q/I2 removed
+  )
+
+knitr::kable(
+  adj_em_tbl7, format = "html",
+  caption = sprintf(
+    "Table 4 (sensitivity). Effect modification by sample - adjusted ML three-step ORs (95%% CI) mutually adjusting for %d covariates, EXCLUDING job satisfaction. ROR = OR(hospital)/OR(general). Reference = C%d %s. General: lambda=%.1f, n=%d/%d. Hospital: lambda=%.1f, n=%d/%d.",
+    length(cov_keys), ms_num[ref_class], ms_lab[ref_class],
+    adj_gen7$lambda,  adj_gen7$n_complete,  adj_gen7$n_total,
+    adj_hosp7$lambda, adj_hosp7$n_complete, adj_hosp7$n_total))
+```
+
+# 5. Side-by-side: with vs without job satisfaction {#comparison}
+
+The 8-covariate estimates are re-fitted here from the same objects, so the
+comparison is internal to this render and cannot pick up a stale Table 4.
+
+```{r}
+#| label: nojob-compare-8-vs-7
+#| results: "hold"
+
+Z_gen8  <- as.matrix(gen_df_adj[ , cov_keys_full])
+Z_hosp8 <- as.matrix(hosp_df_adj[, cov_keys_full])
+
+## Part 2 standardises job satisfaction within each sample before the fit.
+Z_gen8[,  DROP_COV] <- as.numeric(scale(Z_gen8[,  DROP_COV]))
+Z_hosp8[, DROP_COV] <- as.numeric(scale(Z_hosp8[, DROP_COV]))
+
+adj_gen8  <- fit_adj(Z_gen8, post_g, modal_g, sw = gen_df_adj$.w,
+                     ref = ref_class, label = "General (legacy 8 covariates)")
+adj_hosp8 <- fit_adj(Z_hosp8, post_h, modal_h, sw = hosp_df_adj$.w,
+                     ref = ref_class, label = "Hospital (legacy 8 covariates)")
+
+side <- function(fit, tag) fit$ors |>
+  dplyr::transmute(covariate, class,
+                   !!paste0("OR_", tag) := OR,
+                   !!paste0("lo_", tag) := lo,
+                   !!paste0("hi_", tag) := hi)
+
+cmp <- dplyr::inner_join(side(adj_gen8, "8"), side(adj_gen7, "7"),
+                         by = c("covariate", "class")) |>
+  dplyr::filter(covariate != DROP_COV) |>
+  dplyr::mutate(
+    Covariate = unname(cov_labs_adj[covariate]),
+    Contrast  = ms_contrast(class, ref_class),   # manuscript numbering
+    `General, 8 cov (with job sat.)` = fmt_ci_adj(OR_8, lo_8, hi_8),
+    `General, 7 cov (without)`       = fmt_ci_adj(OR_7, lo_7, hi_7),
+    `% change in OR`                 = sprintf("%+.1f", 100 * (OR_7 / OR_8 - 1))) |>
+  dplyr::arrange(match(covariate, cov_keys), ms_num[class]) |>
+  dplyr::select(Covariate, Contrast, `General, 8 cov (with job sat.)`,
+                `General, 7 cov (without)`, `% change in OR`)
+
+knitr::kable(cmp, format = "html",
+  caption = "General sample only: weighted adjusted ORs with and without job satisfaction. Differences combine adjustment-set and complete-case changes and do not identify confounding or mediation.")
+```
+
+# 6. Exports
+
+```{r}
+#| label: nojob-exports
+#| results: "hold"
+
+## 2026-10-18 retired (Andres): former Tables S5 (with vs without job satisfaction)
+## and S6 (between-sample without job satisfaction) were removed from the manuscript.
+## The fits stay in the checkpoint for traceability; the CSVs are no longer written
+## and the files already in salidas/ are DEPRECATED.
+# readr::write_csv(adj_em_tbl7, "table4_adjusted_nojobsat_formatted.csv")
+# readr::write_csv(adj_ror7,    "table4_adjusted_nojobsat_values.csv")
+# readr::write_csv(cmp,         "table4_adjusted_8vs7_comparison.csv")
+cat("Former Tables S5/S6 exports retired on 2026-10-18; not written.\n")
+```
+
+# Reading the historical sensitivity outputs
+
+- The formatted table in Section 4 is the seven-covariate sensitivity, not the
+  new main specification. Column names retain
+  the manuscript header (`Covariate`, `Contrast`, `OR general (95% CI)`,
+  `OR hospital (95% CI)`, `ROR (95% CI)`, `p`; Cochran Q and I2 retired 2026-10-18); the extra
+  `p (Holm)` and `q (BH)` columns are dropped in the manuscript version.
+- Section 5 compares two historical adjustment sets; differing complete cases
+  and odds-ratio non-collapsibility prevent interpreting changes as mediation.
+- Complete-case `n` will differ slightly from Table 4, because rows missing job
+  satisfaction are no longer dropped. The printed `n_complete/n_total` in the
+  caption is the authoritative denominator for this specification.
+- Class numbering is the MANUSCRIPT one (C1 moderately constructive, C2 disengaged,
+  C3 constructive and the reference, C4 ambivalent),
+  assigned from the behavioral signature by `canonical_class_numbering.R` and
+  printed directly by every table above. No hand relabelling is needed any more,
+  and the raw `glca` index is never shown. The crosswalk for the current fit is
+  printed by the `canonical-numbering` chunk; check it against Table 2 once.
+
+
+# Principal: psicotrópicos flexibles, sin satisfacción laboral
+
+Esta especificación fue solicitada antes de revisar sus asociaciones. La
+comparación no selecciona covariables por P-value. Se presentan estimaciones
+ponderadas condicionales al modelo de medición, seguidas de las sensibilidades
+históricas ya calculadas. Los intervalos siguientes se basan en la Hessiana;
+no sustituyen los intervalos del bootstrap conjunto cuando estén disponibles.
+
+```{r}
+#| label: assoc-main-psychotrop
+#| results: hold
+main_keys <- specifications$main
+main_models <- list(
+  general = fit_adj(as.matrix(gen_df[, main_keys]), post_g, modal_g, sw = gen_df$.w,
+                    ref = ref_class, label = "General (main psychotropic specification)"),
+  hospital = fit_adj(as.matrix(hosp_df[, main_keys]), post_h, modal_h, sw = hosp_df$.w,
+                     ref = ref_class, label = "Hospital (main psychotropic specification)"))
+main_unadjusted_models <- lapply(samples, function(sample) {
+  setNames(lapply(main_keys, function(key)
+    fit_adj(as.matrix(sample$cov[, key, drop = FALSE]), sample$post, sample$modal,
+            sw = sample$cov$.w, ref = ref_class)), main_keys)
+})
+main_unadjusted_or <- dplyr::bind_rows(lapply(names(main_unadjusted_models), function(sample_name) {
+  dplyr::bind_rows(lapply(main_unadjusted_models[[sample_name]], function(model) model$ors)) |>
+    dplyr::mutate(sample = sample_name)
+}))
+pair_association_ror <- function(general_ors, hospital_ors, keys) {
+  dplyr::inner_join(
+    dplyr::select(general_ors, covariate, class, OR_gen = OR, lo_gen = lo, hi_gen = hi,
+                  b_gen = b, se_gen = se),
+    dplyr::select(hospital_ors, covariate, class, OR_hosp = OR, lo_hosp = lo, hi_hosp = hi,
+                  b_hosp = b, se_hosp = se), by = c("covariate", "class")) |>
+    dplyr::mutate(logROR = b_hosp - b_gen, seLogROR = sqrt(se_gen^2 + se_hosp^2),
+      ROR = exp(logROR), ROR_lo = exp(logROR - 1.96 * seLogROR),
+      ROR_hi = exp(logROR + 1.96 * seLogROR),
+      ## 2026-10-18 retired (Andres): Cochran Q and I2 removed from all reporting;
+      ## with two samples Q = (logROR/SE)^2 only duplicates the Wald test of log ROR.
+      # Q = (logROR / seLogROR)^2,
+      # I2 = ifelse(Q > 0, pmax(0, (Q - 1) / Q) * 100, 0),
+      p_wald = 2 * stats::pnorm(-abs(logROR / seLogROR)),
+      p_holm = p.adjust(p_wald, "holm"), q_BH = p.adjust(p_wald, "BH"),
+      Covariate = unname(cov_labs[covariate]), Profile = ms_contrast(class, ref_class),
+      inference = "conditional Hessian; independence approximation") |>
+    dplyr::arrange(match(covariate, keys), ms_num[class])
+}
+main_ror <- pair_association_ror(main_models$general$ors, main_models$hospital$ors, main_keys)
+main_unadjusted_ror <- pair_association_ror(
+  main_unadjusted_or[main_unadjusted_or$sample == "general", ],
+  main_unadjusted_or[main_unadjusted_or$sample == "hospital", ], main_keys)
+main_formatted <- main_ror |>
+  dplyr::transmute(Covariate, Contrast = Profile,
+    `OR general (95% CI)` = fmt_ci_adj(OR_gen, lo_gen, hi_gen),
+    `OR hospital (95% CI)` = fmt_ci_adj(OR_hosp, lo_hosp, hi_hosp),
+    `ROR (95% CI)` = fmt_ci_adj(ROR, ROR_lo, ROR_hi),
+    `P-value` = fmt_p_adj(p_wald), `P-value (Holm)` = fmt_p_adj(p_holm), `q (BH)` = fmt_p_adj(q_BH))
+knitr::kable(main_formatted, format = "html",
+  caption = "Main association specification: weighted ML three-step with flexible psychotropic use and no job satisfaction. General poststratification weights; hospital weight 1. Conditional Hessian intervals; shared-measurement bootstrap reported separately.")
+psychotrop_coverage <- dplyr::bind_rows(lapply(names(samples), function(sample_name) {
+  sample_data <- samples[[sample_name]]$cov
+  observed <- !is.na(sample_data$psychotrop_flexible)
+  tibble::tibble(sample = sample_name, n = nrow(sample_data),
+    original_missing = sum(is.na(sample_data$psicotrop)), flexible_missing = sum(!observed),
+    flexible_yes = sum(sample_data$psychotrop_flexible == 1, na.rm = TRUE),
+    prevalence_weighted = stats::weighted.mean(sample_data$psychotrop_flexible,
+                                             sample_data$.w, na.rm = TRUE),
+    effective_n_observed = sum(sample_data$.w[observed])^2 / sum(sample_data$.w[observed]^2))
+}))
+knitr::kable(psychotrop_coverage, digits = 3,
+  caption = "Psychotropic indicator coverage on the measurement-analysis rows; original columns preserved.")
+readr::write_csv(main_ror, "table4_main_psychotrop_values.csv")
+readr::write_csv(main_formatted, "table4_main_psychotrop_formatted.csv")
+readr::write_csv(main_unadjusted_or, "main_unadjusted_or_values.csv")
+readr::write_csv(main_unadjusted_ror, "main_unadjusted_ror_values.csv")
+readr::write_csv(psychotrop_coverage, "psychotrop_flexible_coverage.csv")
+```
+
+# Punto de control y procedencia
+
+```{r}
+#| label: assoc-checkpoint-export
+#| results: hold
+models_by_specification <- list(main = main_models,
+  legacy_jobsat = list(general = adj_gen, hospital = adj_hosp),
+  legacy_nojobsat = list(general = adj_gen7, hospital = adj_hosp7))
+model_diagnostics <- dplyr::bind_rows(lapply(names(models_by_specification), function(specification) {
+  dplyr::bind_rows(lapply(names(models_by_specification[[specification]]), function(sample_name) {
+    model <- models_by_specification[[specification]][[sample_name]]
+    tibble::tibble(specification = specification, sample = sample_name,
+      n = model$n_complete, n_total = model$n_total, effective_n = model$n_eff,
+      weight_sum = model$weight_sum, normalization_mean = model$weight_scale,
+      lambda = model$lambda, convergence = model$conv, weighted = model$weighted,
+      unpenalized_convergence = model$unpenalized$conv,
+      unpenalized_objective = model$unpenalized$objective,
+      unpenalized_max_abs_b = model$unpenalized$max_abs_b,
+      unpenalized_max_se = model$unpenalized$max_se,
+      ridge_triggered = model$ridge_triggered, ridge_reason = model$ridge_reason)
+  }))
+}))
+if (any(model_diagnostics$convergence != 0))
+  warning("Hay modelos que no convergieron; revisar diagnósticos antes de interpretar.")
+knitr::kable(model_diagnostics[, c("specification", "sample", "unpenalized_convergence",
+  "unpenalized_max_abs_b", "unpenalized_max_se", "lambda", "ridge_reason")], digits = 3,
+  caption = "Unpenalized diagnostics and the recorded reason for the unchanged ridge fallback.")
+triggered_models <- model_diagnostics[model_diagnostics$ridge_triggered, , drop = FALSE]
+if (nrow(triggered_models)) {
+  cat("Ridge activated for ", nrow(triggered_models), " of ", nrow(model_diagnostics),
+      " sample/specification fits. ", sep = "")
+  for (diagnostic_row in seq_len(nrow(triggered_models))) {
+    diagnostic <- triggered_models[diagnostic_row, ]
+    cat(sprintf("%s/%s: unpenalized convergence=%d, maximum |beta|=%.3f, maximum SE=%.3f; trigger=%s. ",
+      diagnostic$specification, diagnostic$sample, diagnostic$unpenalized_convergence,
+      diagnostic$unpenalized_max_abs_b, diagnostic$unpenalized_max_se, diagnostic$ridge_reason))
+  }
+} else cat("No sample/specification fit activated the ridge fallback. ")
+cat("Ridge is not Firth correction. Hessian intervals condition on the measurement fit and penalty decision; they do not replace shared-measurement bootstrap or unavailable survey-design information.\n")
+stopifnot(nrow(ror_tbl) == 24L, nrow(adj_ror) == 24L, nrow(adj_ror7) == 21L,
+          nrow(main_ror) == 24L, nrow(main_unadjusted_ror) == 24L,
+          nrow(post_gen) == nrow(gen_df), nrow(post_hosp) == nrow(hosp_df))
+asociaciones <- list(
+  schema_version = 2L,
+  specifications = specifications,
+  measurement = list(checkpoint = "02_hospital.RData",
+                     hash = unname(tools::md5sum("02_hospital.RData")),
+                     model_input_hash = hospital$provenance$model_input_hash,
+                     n_init = n_init, seed = 2125L, reference_raw = ref_class,
+                     class_key = hospital$tables$class_key),
+  covariates = list(general = gen_df, hospital = hosp_df, pooled_raw_scores = combo,
+                    keys = main_keys, keys_legacy_jobsat = cov_keys_full,
+                    keys_without_job_satisfaction = cov_keys,
+                    complete_main = lapply(main_models, function(model) model$rows_complete),
+                    complete_8 = list(general = complete.cases(Z_gen8),
+                                      hospital = complete.cases(Z_hosp8)),
+                    complete_7 = list(general = complete.cases(Z_gen),
+                                      hospital = complete.cases(Z_hosp))),
+  models = list(main = main_models, main_unadjusted = main_unadjusted_models,
+                unadjusted = unadjusted_models,
+                adjusted_8 = list(general = adj_gen, hospital = adj_hosp),
+                adjusted_7 = list(general = adj_gen7, hospital = adj_hosp7)),
+  tables = list(main_ror = main_ror, main_formatted = main_formatted,
+                main_unadjusted_or = main_unadjusted_or,
+                main_unadjusted_ror = main_unadjusted_ror,
+                psychotrop_coverage = psychotrop_coverage,
+                unadjusted_or = or_long, unadjusted_ror = ror_tbl,
+                unadjusted_formatted = em_tbl, adjusted_ror = adj_ror,
+                adjusted_formatted = adj_em_tbl, without_job_satisfaction = adj_ror7,
+                without_job_satisfaction_formatted = adj_em_tbl7,
+                comparison_8vs7_general = cmp, diagnostics = model_diagnostics),
+  provenance = list(created = Sys.time(),
+                    input_paths = c(general = gen_path, hospital = hosp_path),
+                    input_hash = tools::md5sum(c(gen_path, hosp_path)),
+                    code_hash = tools::md5sum(c("../03_asociaciones.qmd",
+                                               "../R/canonical_class_numbering.R",
+                                               "../R/association_models.R")),
+                    session = sessionInfo(),
+                    weights = c(unadjusted_general = "survey weights",
+                                unadjusted_hospital = "1",
+                                adjusted_general = "poststratification weights; mean 1 among model complete cases",
+                                adjusted_hospital = "1"),
+                    classification_matrix = "unweighted, full measurement sample; weights enter step 3 only",
+                    psychotrop_rule = "any yes -> 1; all no -> 0; otherwise NA; original psicotrop retained",
+                    psychotrop_recall_window = "not established by item labels; questionnaire confirmation pending",
+                    model_helper = "../R/association_models.R",
+                    ridge = "lambda=0; fallback=0.1; penalty includes intercepts"))
+save(asociaciones, file = "03_asociaciones.RData", compress = "xz")
+readr::write_csv(model_diagnostics, "association_model_diagnostics.csv")
+cat("Guardado 03_asociaciones.RData; objeto único: asociaciones.\n")
+sessionInfo()
+```

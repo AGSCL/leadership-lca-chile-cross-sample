@@ -86,3 +86,27 @@
 !/leadership_LCA_part2_adjusted_nojobsat.html
 !/Figures_IAOEH_consolidated.html
 !/styles.css
+# Reviewed reproducibility sources only; private inputs and outputs stay excluded.
+!/reproducibilidad/
+/reproducibilidad/*
+!/reproducibilidad/.gitattributes
+!/reproducibilidad/.gitignore
+!/reproducibilidad/README.md
+!/reproducibilidad/MAPA_MANUSCRITO.csv
+!/reproducibilidad/ORIGEN_FUENTES.csv
+!/reproducibilidad/_quarto.yml
+!/reproducibilidad/01_general.qmd
+!/reproducibilidad/02_hospital.qmd
+!/reproducibilidad/03_asociaciones.qmd
+!/reproducibilidad/04_sensibilidad_figuras.qmd
+!/reproducibilidad/05_bootstrap.qmd
+!/reproducibilidad/06_multiplicidad_solapamiento.qmd
+!/reproducibilidad/verificar.R
+!/reproducibilidad/R/
+/reproducibilidad/R/*
+!/reproducibilidad/R/association_models.R
+!/reproducibilidad/R/bootstrap_shared.R
+!/reproducibilidad/R/canonical_class_numbering.R
+!/reproducibilidad/R/export_leadership_results.R
+!/reproducibilidad/R/leadership_table2.R
+!/reproducibilidad/R/load_leadership_results.R

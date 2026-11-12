@@ -1,0 +1,1072 @@
+---
+title: "02. Hospital: perfiles compartidos e invariancia"
+description: |
+  Multiple-group latent class analysis (glca) of the Constructive-Destructive
+  Leadership Scale, comparing the general salaried-worker survey (FONDECYT
+  1170239) with the hospital healthcare-worker sample, using 13 of the 14 items
+  (item 3 excluded). Tests whether the retained four-class solution is invariant
+  across the two settings (measurement invariance), whether the profile
+  *distribution* differs, and whether a different number of classes / new
+  profiles emerge in either group. Explores 1-6 classes.
+date: last-modified
+author: "Andres Gonzalez Santa Cruz"
+toc: true
+toc-location: left
+format:
+  html:
+    code-fold: true
+    embed-resources: true
+    self-contained: true
+    theme:
+      - journal
+    fig-cap-location: top
+    toc: true
+execute:
+  error: false
+  echo: true
+  warning: true
+  message: true
+  freeze: false
+editor: source
+execute-dir: project
+lightbox: auto
+---
+
+```{r}
+#| label: mg-output-directory
+#| include: false
+dir.create("salidas", showWarnings = FALSE)
+knitr::opts_knit$set(root.dir = normalizePath("salidas", winslash = "/", mustWork = TRUE))
+```
+
+# Esta etapa
+
+Esta copia contiene el cálculo completo del notebook multigrupo. Ejecútala después
+de `01_general.qmd`; sus ajustes son independientes del modelo general.
+Los CSV, figuras y `02_hospital.RData` se escriben en `salidas/`.
+
+La primera ejecución estima los modelos con 4.000 inicios. Las siguientes
+reutilizan solamente el punto de control propio cuando coinciden entradas,
+código y configuración. `LCA_REFIT=1` fuerza la estimación completa.
+Los modelos invariantes repetidos entre secciones se calculan una sola vez.
+Los 19 ajustes se distribuyen entre procesos independientes, seis por defecto
+(`LCA_WORKERS`), limitados por los núcleos disponibles. `medicion_hospital.rds`
+guarda los ajustes antes de generar el informe, para poder retomarlo si falla
+una tabla o figura.
+
+Las prevalencias y modelos de medición de esta etapa son **sin ponderación**.
+Las etiquetas se conservan para reproducir el análisis; su revisión conceptual
+queda documentada en la revisión metodológica. La preferencia de BIC por el
+modelo invariante es apoyo comparativo, no demostración de igualdad exacta; el
+rechazo por LRT no prueba por sí mismo que se deba exclusivamente a potencia.
+
+# What this notebook does
+
+The main analysis retains **four** latent leadership profiles in the general
+salaried-worker survey. Here we ask whether that structure is **robust to place
+and occupation** by bringing in a second sample — hospital healthcare workers,
+measured with the *same* Constructive-Destructive Leadership Scale — and fitting
+a **multiple-group LCA** with `glca`.
+
+Three distinct questions, three distinct outputs:
+
+| Question | How it is answered here | Section |
+|---|---|---|
+| Does the pooled two-group data still support ~4 classes? | Multiple-group enumeration, `nclass` = 1-6 (`measure.inv = TRUE`) | *Enumeration (pooled)* |
+| Are the profiles **the same** across settings (measurement invariance)? | Compare `measure.inv = TRUE` (item probs shared) vs `FALSE` (item probs free) at k = 3-5, LRT via `gofglca` + information criteria | *Measurement invariance* |
+| Does the **mix** of profiles differ between settings? | Group-specific class prevalences from the invariant 4-class model | *Group-specific prevalences* |
+| Do **new** classes appear in either group? | Separate single-group enumeration (each sample alone, k = 2-6) + side-by-side 4-class profiles | *Separate enumeration* / *Profile comparison* |
+
+**Interpretation key.** If measurement invariance *holds* (relaxing it does not
+improve fit and the invariant model has the lower BIC), the same four
+item-response profiles exist in both settings and the four-class solution is
+robust to setting/occupation; the two samples may still differ in *how many
+workers* fall in each profile (prevalences). If invariance is *rejected*, the
+item-response probabilities defining one or more profiles differ by setting, and
+the separate-enumeration / profile-comparison sections show how.
+
+> **Confirmed input configuration.** The general file uses `lid_des1..14` and
+> the hospital file uses `p39_1..14`, with item 3 excluded from both. The positional
+> crosswalk is `p39_k <-> lid_des_k`. Set `LCA_RAW_PATH` and `LCA_HOSPITAL_PATH`
+> to authorised local files on another computer; project-local files are also
+> supported. The loader checks all required columns before analysis.
+
+```{r}
+#| label: mg-setup
+#| results: "hold"
+
+rm(list = ls()); gc()
+
+required_packages <- c(
+  "dplyr", "tidyr", "tibble", "purrr", "haven", "readr", "janitor", "stringr", "rlang",
+  "glca",
+  "ggplot2", "scales",
+  "knitr", "kableExtra", "digest", "future", "furrr"
+)
+missing_packages <- required_packages[!vapply(required_packages, requireNamespace,
+                                               logical(1), quietly = TRUE)]
+if (length(missing_packages))
+  stop("Instala primero estos paquetes: ", paste(missing_packages, collapse = ", "))
+invisible(lapply(required_packages, function(pkg)
+  suppressPackageStartupMessages(library(pkg, character.only = TRUE))))
+
+set.seed(2125)                 # same lucky seed as the main analysis
+options(scipen = 999)
+
+## Reportable configuration: 4000 random starts for every fit. A render of this
+## notebook fits models; the environment variables below configure input files,
+## not a draft/reportable switch.
+n_init <- 4e3
+```
+
+# Data: load both samples and harmonise the 13 items
+
+```{r}
+#| label: mg-load-data
+#| results: "hold"
+
+## Explicit environment path first, then project-local inputs, then legacy Drive.
+## Participant-level inputs and fitted objects remain private, outside public Git.
+resolve_drive_path <- function(rel, env_var,
+    roots = c("H:/My Drive", "G:/Mi unidad", "C:/Users/andre/Google Drive")) {
+  rel <- chartr("\\", "/", rel)
+  explicit <- Sys.getenv(env_var, unset = "")
+  if (nzchar(explicit)) {
+    if (!file.exists(explicit)) stop(env_var, " points to a missing file: ", explicit)
+    return(normalizePath(explicit, winslash = "/", mustWork = TRUE))
+  }
+  candidates <- unique(c(basename(rel), file.path("..", "data", "private", basename(rel)),
+                         file.path("..", "..", basename(rel)), rel, file.path(roots, rel)))
+  found <- candidates[file.exists(candidates)]
+  if (length(found)) return(normalizePath(found[[1]], winslash = "/", mustWork = TRUE))
+  stop("Input not found. Set ", env_var, " to the authorised local input file. Tried:\n  ",
+       paste(candidates, collapse = "\n  "))
+}
+read_any <- function(path) {
+  switch(tolower(tools::file_ext(path)),
+    dta = haven::read_dta(path), sav = haven::read_sav(path),
+    rds = readRDS(path), csv = readr::read_csv(path, show_col_types = FALSE),
+    stop("Extension no soportada: ", tools::file_ext(path)))
+}
+
+## ---- Confirmed legacy locations; environment variables override these ------
+gen_rel  <- "DOCUMENTOS/6.TESIS 2018/LCA NAQ/BD_2020_input3_match_not_miss.rds"
+hosp_rel <- "DOCUMENTOS/6.TESIS 2018/_BASE DEF_FINAL/andrea/Base de datos 27.8.2019.dta"
+
+## (ii) item columns in EACH file, in the SAME conceptual order, item 3 excluded.
+##      Crosswalk is positional: gen_items[j] and hosp_items[j] must be the SAME
+##      leadership behavior. General uses lid_des1..14; hospital uses p39_1..14.
+gen_items  <- paste0("lid_des", c(1:2, 4:14))   # 13 items, lid_des3 dropped
+hosp_items <- paste0("p39_",    c(1:2, 4:14))   # 13 items, p39_3 dropped
+## ========================================================================
+
+## Common (harmonised) item names used for the pooled model.
+common_items <- sprintf("I%02d", seq_along(gen_items))   # I01..I13
+
+gen_path  <- resolve_drive_path(gen_rel, "LCA_RAW_PATH")
+hosp_path <- resolve_drive_path(hosp_rel, "LCA_HOSPITAL_PATH")
+message("General file : ", gen_path)
+message("Hospital file: ", hosp_path)
+
+gen_raw  <- read_any(gen_path)  |> janitor::clean_names()
+hosp_raw <- read_any(hosp_path) |> janitor::clean_names()
+
+## ---- defensive check that the item columns exist ------------------------
+check_items <- function(df, items, label) {
+  miss <- setdiff(items, names(df))
+  if (length(miss)) {
+    cand <- grep("^(lid_des|p39_)[0-9]+$", names(df), value = TRUE)
+    stop("En la base '", label, "' faltan estas columnas de items: ",
+         paste(miss, collapse = ", "),
+         "\nColumnas tipo item detectadas: ",
+         if (length(cand)) paste(cand, collapse = ", ") else "(ninguna)",
+         "\nEdita 'gen_items'/'hosp_items' para que coincidan.")
+  }
+  invisible(TRUE)
+}
+check_items(gen_raw,  gen_items,  "general")
+check_items(hosp_raw, hosp_items, "hospital")
+
+## ---- harmonise: select 13 items, shift 0-3 -> 1-4 per file, factor 1:4 ---
+## Each file is shifted INDEPENDENTLY based on its own minimum: the general .rds
+## is coded 0-3 (shifted +1 in the main analysis) and the hospital .dta is
+## expected 0-3 as well, but this is decided per file so a 1-4 file is left alone.
+prep_group <- function(df, items, common, group_label) {
+  x <- df[, items, drop = FALSE]
+  names(x) <- common
+  item_min <- suppressWarnings(min(vapply(x,
+                function(v) min(as.numeric(v), na.rm = TRUE), numeric(1))))
+  shift <- if (is.finite(item_min) && item_min == 0) 1L else 0L
+  for (nm in common) x[[nm]] <- ordered(as.numeric(x[[nm]]) + shift, levels = 1:4)
+  if (shift == 1L) message("[", group_label, "] items recodificados 0-3 -> 1-4 (+1).")
+  x$setting <- group_label
+  x
+}
+gen_h  <- prep_group(gen_raw,  gen_items,  common_items, "General salaried")
+hosp_h <- prep_group(hosp_raw, hosp_items, common_items, "Hospital HCW")
+
+## Pool, keep complete cases on the 13 items, make setting an (ordered) factor.
+combo <- dplyr::bind_rows(gen_h, hosp_h)
+combo <- combo[stats::complete.cases(combo[, common_items]), ]
+combo$setting <- factor(combo$setting, levels = c("General salaried", "Hospital HCW"))
+
+cat("Complete-case n by setting:\n"); print(table(combo$setting))
+cat("\nPooled n =", nrow(combo), "on", length(common_items), "items.\n")
+```
+
+```{r}
+#| label: mg-sample-sizes-export
+#| results: "hold"
+
+## Manuscript handoff: the text currently states only the POOLED complete-case n;
+## the per-setting n (general vs hospital) must be quotable too. Export both plus
+## a ready-to-paste sentence (house style: no space before '=', e.g. 'n= 1,991').
+n_by <- table(combo$setting)
+sizes_tbl <- tibble::tibble(
+  Setting = c(names(n_by), "Pooled"),
+  n       = c(as.integer(n_by), nrow(combo)),
+  n_init  = n_init)
+readr::write_csv(sizes_tbl, "mg_sample_sizes.csv")
+cat(sprintf(
+  "Manuscript-ready: complete cases on the 13 items were n= %s general salaried workers and n= %s hospital workers (pooled n= %s).\n",
+  format(as.integer(n_by)[1], big.mark = ","),
+  format(as.integer(n_by)[2], big.mark = ","),
+  format(nrow(combo), big.mark = ",")))
+```
+
+```{r}
+#| label: mg-harmonisation-check
+#| results: "hold"
+
+## Sanity check on the crosswalk/coding: mean endorsement of the top-2 categories
+## (fairly often + almost always) per item, per setting. Constructive items
+## should be HIGH in both settings and destructive items LOW; a flipped or
+## mismatched item would show up as a reversed pattern here. Eyeball before trusting.
+endorse <- combo |>
+  tidyr::pivot_longer(dplyr::all_of(common_items), names_to = "item", values_to = "v") |>
+  dplyr::mutate(top2 = as.integer(as.numeric(v) >= 3)) |>
+  dplyr::group_by(setting, item) |>
+  dplyr::summarise(pct_top2 = round(100 * mean(top2, na.rm = TRUE), 1), .groups = "drop") |>
+  tidyr::pivot_wider(names_from = setting, values_from = pct_top2)
+
+## map I01.. back to the source item names for readability
+endorse$gen_col  <- gen_items[match(endorse$item, common_items)]
+endorse$hosp_col <- hosp_items[match(endorse$item, common_items)]
+endorse |>
+  dplyr::select(item, gen_col, hosp_col, dplyr::everything()) |>
+  knitr::kable("markdown", caption = "Harmonisation check: % endorsing the top-2 categories per item, by setting (constructive items should be high in BOTH; tyrannical/*laissez-faire* low). Verify the crosswalk before interpreting the models.")
+```
+
+# Punto de control de medición
+
+```{r}
+#| label: mg-checkpoint-input
+#| results: hold
+measurement_input <- as.data.frame(combo[, c(common_items, "setting"), drop = FALSE])
+rownames(measurement_input) <- NULL
+model_input_hash <- digest::digest(measurement_input, algo = "sha256")
+source_paths <- c("../02_hospital.qmd", "../R/canonical_class_numbering.R")
+stopifnot(all(file.exists(source_paths)))
+code_hash <- tools::md5sum(source_paths)
+input_hash <- setNames(unname(tools::md5sum(c(gen_path, hosp_path))), c("general", "hospital"))
+measurement_fits <- list()
+separate_fits <- list()
+if (file.exists("02_hospital.RData") && Sys.getenv("LCA_REFIT", "0") != "1") {
+  checkpoint_env <- new.env(parent = emptyenv())
+  loaded_names <- load("02_hospital.RData", envir = checkpoint_env)
+  if (!identical(loaded_names, "hospital"))
+    stop("02_hospital.RData debe contener solamente el objeto hospital.")
+  cached_hospital <- checkpoint_env$hospital
+  if (!identical(cached_hospital$input, measurement_input) ||
+      !identical(cached_hospital$n_init, n_init) ||
+      !identical(cached_hospital$seed, 2125L) ||
+      !identical(cached_hospital$provenance$code_hash, code_hash) ||
+      !identical(cached_hospital$provenance$input_hash, input_hash))
+    stop("El punto de control no corresponde a estos datos/código. Usa LCA_REFIT=1 para recalcular.")
+  measurement_fits <- c(cached_hospital$fits$pooled,
+                        cached_hospital$fits$invariance)
+  measurement_fits <- measurement_fits[!duplicated(names(measurement_fits))]
+  separate_fits <- cached_hospital$fits$separate
+  cat("Punto de control validado; se reutilizan los modelos guardados.\n")
+} else if (file.exists("medicion_hospital.rds") && Sys.getenv("LCA_REFIT", "0") != "1") {
+  cached_measurement <- readRDS("medicion_hospital.rds")
+  if (!identical(cached_measurement$input, measurement_input) ||
+      !identical(cached_measurement$model_input_hash, model_input_hash) ||
+      !identical(cached_measurement$n_init, n_init) ||
+      !identical(cached_measurement$seed, 2125L) ||
+      !identical(cached_measurement$code_hash, code_hash) ||
+      !identical(cached_measurement$input_hash, input_hash))
+    stop("medicion_hospital.rds no corresponde a estos datos/código. Usa LCA_REFIT=1 para recalcular.")
+  measurement_fits <- cached_measurement$measurement_fits
+  separate_fits <- cached_measurement$separate_fits
+  cat("Ajustes de medición validados; se retoma la generación del informe.\n")
+}
+```
+
+# Helpers (entropy, per-group posteriors, rho, information criteria)
+
+```{r}
+#| label: mg-helpers
+#| results: "hold"
+
+## Relative entropy (0-1; higher = cleaner separation) from a posterior matrix.
+relative_entropy <- function(post) {
+  post <- as.matrix(post)
+  N <- nrow(post); K <- ncol(post)
+  if (K < 2) return(NA_real_)
+  e <- -sum(post * log(pmax(post, 1e-12)))
+  1 - e / (N * log(K))
+}
+
+## glca stores multiple-group posteriors as a LIST (one matrix per group). This
+## returns that list regardless of single/multi group so pooled entropy and
+## per-group prevalences work uniformly.
+get_post_list <- function(g) {
+  p <- g$posterior
+  if (is.matrix(p) || is.data.frame(p)) list(as.matrix(p))
+  else lapply(p, as.matrix)
+}
+pooled_entropy <- function(g) relative_entropy(do.call(rbind, get_post_list(g)))
+
+## Per-group class prevalences = mean posterior within each group (robust; does
+## not depend on glca's internal gamma/prior slot names). Rows aligned to the
+## group factor levels in the order glca returns them.
+group_prev <- function(g, group_levels) {
+  pl <- get_post_list(g)
+  m  <- t(vapply(pl, function(p) colMeans(p), numeric(ncol(pl[[1]]))))
+  nm <- names(pl)
+  rownames(m) <-
+    if (!is.null(nm) && all(nzchar(nm)) && length(nm) == nrow(m)) nm
+    else if (length(group_levels) == nrow(m)) group_levels
+    else paste0("G", seq_len(nrow(m)))
+  colnames(m) <- paste0("C", seq_len(ncol(m)))
+  m
+}
+
+## Item-response probabilities. For a SINGLE-group fit, rho[[item]] is K x 4.
+## For a multi-group measure.inv = FALSE fit, rho is nested by group; pick a group.
+get_rho <- function(g, group = 1L) {
+  r <- g$param$rho
+  if (is.list(r) && is.list(r[[1]])) r <- r[[group]]   # unwrap group level if present
+  r
+}
+## Top-2 endorsement (categories 3+4) per item x class, from a rho list.
+top2_mat <- function(rho, K) {
+  m <- t(vapply(seq_along(rho), function(j) rho[[j]][, 3] + rho[[j]][, 4], numeric(K)))
+  rownames(m) <- common_items; colnames(m) <- paste0("C", 1:K)
+  m
+}
+
+## Defensive scalar getters (slot names vary slightly by glca version).
+gof_get <- function(g, what) {
+  gg <- g$gof
+  cand <- switch(what, loglik = c("loglik","logLik","ll"),
+                       aic = c("aic","AIC"), bic = c("bic","BIC"))
+  for (nm in cand) if (!is.null(gg[[nm]])) return(as.numeric(gg[[nm]])[1])
+  NA_real_
+}
+## npar recovered from AIC and logL: AIC = -2 logL + 2 npar  ->  npar = (AIC + 2 logL)/2
+npar_of <- function(g) { aic <- gof_get(g, "aic"); ll <- gof_get(g, "loglik"); (aic + 2 * ll) / 2 }
+
+## Fit a multiple-group glca with a seed fallback (belt-and-suspenders against a
+## rare degenerate random start, exactly as in the main enumeration chunk).
+## glca evaluates `group` by non-standard evaluation inside `data`, so the group
+## must be a BARE column name (as in glca's own examples: group = DEGREE), not a
+## vector. The pooled data frame always names the grouping column `setting`.
+fit_mg <- function(nclass, measure.inv, data = combo, form = item_f) {
+  fit_key <- paste0(if (measure.inv) "invariant_k" else "free_k", nclass)
+  if (!fit_key %in% names(measurement_fits)) stop("Falta el ajuste previo: ", fit_key)
+  measurement_fits[[fit_key]]
+}
+```
+
+```{r}
+#| label: mg-item-meta
+#| results: "hold"
+## Behaviour type + English label for each of the 13 items (order = common_items,
+## i.e. gen_items = lid_des1..14 with item 3 excluded). Defined ONCE here so BOTH
+## the invariant-profiles chunk (labels the shared classes) and the profile-
+## comparison chunk (separate-group figure) reuse the same metadata.
+item_type <- c("Destructive","Constructive","Destructive","Laissez-faire",
+               "Constructive","Laissez-faire","Destructive","Laissez-faire",
+               "Destructive","Constructive","Constructive","Constructive","Constructive")
+behavior_text <- c(Destructive = "Tyrannical", `Laissez-faire` = "*laissez-faire*",
+                   Constructive = "Constructive")
+behavior_labels <- c(Destructive = "'Tyrannical'", `Laissez-faire` = "italic('laissez-faire')",
+                     Constructive = "'Constructive'")
+behavior_labeller <- ggplot2::as_labeller(behavior_labels, default = ggplot2::label_parsed)
+item_lab  <- c("Humiliates employees","Encourages creative ideas","Gestures of displeasure",
+               "Avoids making decisions","Recognizes good performance","Avoids involvement in work",
+               "Spreads false information","Absent when needed","Berates by phone / rude email",
+               "Seeks to develop capabilities","Sets clear objectives","Defines / explains tasks",
+               "Flexible, open to innovation")
+stopifnot(length(item_type) == length(common_items), length(item_lab) == length(common_items))
+```
+
+# Ajustes de medición en paralelo
+
+```{r}
+#| label: mg-prefits
+#| results: hold
+item_f <- as.formula(paste0("item(", paste(common_items, collapse = ", "), ") ~ 1"))
+requested_workers <- suppressWarnings(as.numeric(Sys.getenv("LCA_WORKERS", "6")))
+if (length(requested_workers) != 1L || !is.finite(requested_workers) ||
+    requested_workers < 1 || requested_workers != floor(requested_workers))
+  stop("LCA_WORKERS debe ser un entero positivo.")
+available_cores <- parallel::detectCores(logical = FALSE)
+if (is.na(available_cores)) available_cores <- parallel::detectCores()
+if (is.na(available_cores) || available_cores < 1L) available_cores <- 1L
+n_workers <- as.integer(min(requested_workers, available_cores))
+
+fit_tasks <- c(
+  lapply(1:6, function(classes) list(key = paste0("invariant_k", classes),
+    classes = classes, type = "multiple", invariant = TRUE)),
+  lapply(3:5, function(classes) list(key = paste0("free_k", classes),
+    classes = classes, type = "multiple", invariant = FALSE)),
+  unlist(lapply(levels(combo$setting), function(group_label)
+    lapply(2:6, function(classes) list(key = paste0(group_label, "_k", classes),
+      classes = classes, type = "single", setting = group_label))), recursive = FALSE))
+names(fit_tasks) <- vapply(fit_tasks, function(task) task$key, character(1))
+stopifnot(length(fit_tasks) == 19L, !anyDuplicated(names(fit_tasks)))
+
+fit_hospital_task <- function(task, data, formula, starts) {
+  RNGkind("Mersenne-Twister")
+  if (task$type == "single")
+    data <- data[data$setting == task$setting, , drop = FALSE]
+  model <- NULL
+  for (fit_seed in 2125:2134) {
+    model <- tryCatch({
+      if (task$type == "multiple")
+        glca::glca(formula, group = setting, data = data, nclass = task$classes,
+                   measure.inv = task$invariant, n.init = starts, seed = fit_seed,
+                   verbose = FALSE)
+      else
+        glca::glca(formula, data = data, nclass = task$classes,
+                   n.init = starts, seed = fit_seed, verbose = FALSE)
+    }, error = function(condition) NULL)
+    if (!is.null(model)) break
+  }
+  if (is.null(model) && task$classes != 1L)
+    stop("No se pudo ajustar ", task$key, " con semillas 2125-2134.")
+  if (!is.null(model)) attr(model, "successful_seed") <- fit_seed
+  model
+}
+
+validate_hospital_fit <- function(model, task, data, items) {
+  if (is.null(model)) {
+    if (task$classes == 1L) return(invisible(TRUE))
+    stop("Ajuste ausente: ", task$key)
+  }
+  stopifnot(model$model$C == task$classes, identical(model$var.names$y.names, items))
+  if (task$type == "multiple") {
+    stopifnot(identical(model$model$measure.inv, task$invariant),
+              identical(model$var.names$g.names, levels(data$setting)))
+    expected_data <- lapply(levels(data$setting), function(group_label)
+      data.matrix(data[data$setting == group_label, items, drop = FALSE]))
+  } else {
+    expected_data <- list(data.matrix(data[data$setting == task$setting, items, drop = FALSE]))
+  }
+  posterior <- get_post_list(model)
+  stopifnot(length(model$datalist$y) == length(expected_data),
+            length(posterior) == length(expected_data))
+  for (group_index in seq_along(expected_data)) {
+    stopifnot(isTRUE(all.equal(unname(model$datalist$y[[group_index]]),
+                              unname(expected_data[[group_index]]), check.attributes = FALSE)),
+              nrow(posterior[[group_index]]) == nrow(expected_data[[group_index]]),
+              ncol(posterior[[group_index]]) == task$classes,
+              all(is.finite(posterior[[group_index]])),
+              all(abs(rowSums(posterior[[group_index]]) - 1) < 1e-8))
+  }
+  invisible(TRUE)
+}
+
+existing_fits <- c(measurement_fits, separate_fits)
+missing_tasks <- fit_tasks[setdiff(names(fit_tasks), names(existing_fits))]
+if (length(missing_tasks)) {
+  message("Estimando ", length(missing_tasks), " modelos en ", n_workers, " procesos.")
+  new_fits <- tryCatch({
+    future::plan(future::multisession, workers = n_workers)
+    furrr::future_map(missing_tasks, fit_hospital_task, data = combo,
+      formula = item_f, starts = n_init,
+      .options = furrr::furrr_options(seed = TRUE, packages = "glca", scheduling = Inf))
+  }, finally = future::plan(future::sequential))
+  existing_fits <- c(existing_fits, new_fits)
+}
+for (fit_key in names(fit_tasks))
+  validate_hospital_fit(existing_fits[[fit_key]], fit_tasks[[fit_key]], combo, common_items)
+multiple_keys <- names(fit_tasks)[vapply(fit_tasks, function(task) task$type == "multiple", logical(1))]
+single_keys <- setdiff(names(fit_tasks), multiple_keys)
+measurement_fits <- existing_fits[multiple_keys]
+separate_fits <- existing_fits[single_keys]
+saveRDS(list(input = measurement_input, input_hash = input_hash,
+             code_hash = code_hash, model_input_hash = model_input_hash,
+             n_init = n_init, seed = 2125L, workers = n_workers,
+             measurement_fits = measurement_fits, separate_fits = separate_fits,
+             created = Sys.time()), "medicion_hospital.rds")
+cat("medicion_hospital.rds guardado; las secciones siguientes reutilizan estos ajustes.\n")
+```
+
+# Enumeration (pooled two-group data), 1-6 classes
+
+Multiple-group models with item-response probabilities **shared across settings**
+(`measure.inv = TRUE`) and setting-specific class prevalences. This asks how many
+profiles the pooled data supports.
+
+```{r}
+#| label: mg-enum-pooled
+#| results: "hold"
+
+item_f <- as.formula(paste0("item(", paste(common_items, collapse = ", "), ") ~ 1"))
+Kseq <- 1:6
+
+n_pool <- nrow(combo)
+enum_pooled <- purrr::map_dfr(Kseq, function(k) {
+  g <- tryCatch(fit_mg(k, measure.inv = TRUE), error = function(e) NULL)
+  if (is.null(g)) return(tibble::tibble(
+    k = k, logLik = NA, npar = NA, AIC = NA, BIC = NA, CAIC = NA, SABIC = NA,
+    AWE = NA, entropy = NA, `Mean AvePP` = NA, `Smallest n` = NA, `Smallest %` = NA))
+  ll <- gof_get(g, "loglik"); aic <- gof_get(g, "aic"); bic <- gof_get(g, "bic")
+  np <- (aic + 2 * ll) / 2
+
+  ## AWE (Masyn 2013 form): -2logL + 2*npar*(3/2 + log n), pooled n
+  awe <- -2 * ll + 2 * np * (1.5 + log(n_pool))
+
+  ## pool the per-group posteriors, then modal assignment / smallest class / AvePP.
+  ## k = 1 is safe here: post is N x 1, modal is all 1s, avepp = mean(1) = 1,
+  ## smallest n = n_pool, smallest % = 100, entropy = NA (relative_entropy, K < 2).
+  post  <- do.call(rbind, get_post_list(g))
+  modal <- max.col(post)
+  cl_n  <- as.integer(table(factor(modal, levels = 1:k)))
+  avepp <- vapply(1:k, function(t)
+             if (any(modal == t)) mean(post[modal == t, t]) else NA_real_, numeric(1))
+
+  tibble::tibble(
+    k = k, logLik = round(ll, 2), npar = round(np),
+    AIC = round(aic, 2), BIC = round(bic, 2),
+    CAIC  = round(-2 * ll + np * (log(n_pool) + 1), 2),
+    SABIC = round(-2 * ll + np * log((n_pool + 2) / 24), 2),
+    AWE   = awe,
+    entropy = round(pooled_entropy(g), 3),
+    `Mean AvePP` = mean(avepp, na.rm = TRUE),
+    `Smallest n` = min(cl_n),
+    `Smallest %` = min(cl_n) / n_pool * 100)
+})
+
+## approximate Bayes factor vs the k+1 neighbour: BF_{k,k+1} = exp((BIC_{k+1} - BIC_k)/2)
+bic_next       <- enum_pooled$BIC[match(enum_pooled$k + 1L, enum_pooled$k)]
+enum_pooled$BF <- exp((bic_next - enum_pooled$BIC) / 2)
+
+## mark the IC minima (over the k that were estimable)
+mark_min <- function(x) { i <- which(x == min(x, na.rm = TRUE)); out <- rep("", length(x)); out[i] <- "*"; out }
+enum_show <- enum_pooled |>
+  dplyr::mutate(
+    BIC_min      = mark_min(BIC),
+    CAIC_min     = mark_min(CAIC),
+    AWE          = round(AWE, 2),
+    `Mean AvePP` = round(`Mean AvePP`, 3),
+    `Smallest %` = round(`Smallest %`, 1),
+    BF = dplyr::case_when(
+           is.na(BF) ~ NA_character_,
+           BF > 100  ~ ">100",
+           BF < 0.01 ~ "<0.01",
+           TRUE      ~ sprintf("%.2f", BF))) |>
+  dplyr::select(k, logLik, npar, AIC, BIC, BIC_min, CAIC, CAIC_min, SABIC, AWE,
+                entropy, `Mean AvePP`, `Smallest n`, `Smallest %`, BF)
+enum_show |>
+  knitr::kable("markdown",
+    caption = "Pooled multiple-group enumeration (measure.inv = TRUE): information criteria, relative entropy (pooled across both settings' posteriors; a single value can mask setting-specific separation), classification diagnostics (Mean AvePP, smallest-class n and %) and an approximate Bayes factor by number of classes. '*' marks the BIC and CAIC minima. nclass = 1 is the independence baseline (may not be estimable in glca).")
+```
+
+*Notes.* **AWE** (Approximate Weight of Evidence; Masyn, 2013) = `-2*logL + 2*npar*(3/2 + log(n))`, evaluated on the pooled sample (`n = n_pool`) from the maximised model log-likelihood; it imposes a heavier, sample-size-adjusted complexity penalty than BIC, and lower values indicate better penalised fit (this uses the model log-likelihood, an approximation to the classification-based AWE). **BF** is a BIC-based approximate pairwise Bayes factor, `BF_{k,k+1} = exp((BIC_{k+1} - BIC_k)/2)`, comparing the k-class model with the (k+1)-class model: `BF > 3` is positive/moderate and `BF > 10` strong evidence for k over k+1 (values below `1/3` or `1/10` favour k+1); it is undefined for the largest k (no k+1 neighbour, shown blank) and is displayed capped at ">100"/"<0.01". **Mean AvePP** is the average posterior class probability: for each class, the mean posterior probability of the modal class among cases modally assigned to it, averaged over classes; values near 1 indicate clean classification (about 0.70 is a common adequacy threshold). **Smallest n / Smallest %** give the count and percentage of the pooled sample in the smallest modally-assigned class; very small classes flag possible over-extraction or unstable solutions. **VLMR is omitted:** glca does not implement the Vuong-Lo-Mendell-Rubin (adjusted LMR) likelihood-ratio test, and it is not reliably defined for multiple-group LCA; class enumeration here rests on the information criteria (BIC, CAIC, AWE) and the BIC-based approximate Bayes factor rather than a VLMR/BLRT p-value.
+
+# Measurement invariance: are the profiles the same across settings?
+
+For each candidate `k`, fit the model with item-response probabilities **shared**
+(`measure.inv = TRUE`, nested) vs **free across settings** (`measure.inv = FALSE`).
+The likelihood-ratio test (via `gofglca`, cross-checked by hand) asks whether
+freeing the item probabilities improves fit; the information criteria ask whether
+that extra complexity is worth it. **The lead criterion here is BIC and the
+approximate Bayes factor** (the Cheng & Rensvold analog developed in the next
+subsection), because they are robust to the large-*n* over-rejection of the chi-square
+test: **invariance is supported when BIC(invariant) < BIC(free)** (equivalently
+ΔBIC = BIC(free) − BIC(invariant) ≥ 2 positive, ≥ 6 strong, ≥ 10 very strong evidence
+for invariance). The χ² LRT is reported alongside as a caveat only — with ~2,800
+pooled complete cases it is over-powered and rejects almost automatically, so a
+significant LRT paired with a decisively lower invariant BIC reflects large-*n*
+over-rejection, not substantive non-invariance. (The lighter-penalty AIC and SABIC
+likewise lean toward the free model, and at k = 3 even BIC prefers the free model —
+see the tables below; these are reported for honesty, not as the deciding rule.)
+
+> **Why chi-square (and not a bootstrap LRT) here.** The invariance null constrains
+> item-response probabilities to be *equal* across settings at a fixed number of
+> classes — an equality restriction in the interior of the parameter space — so the
+> deviance difference is asymptotically chi-square(df) and the standard LRT applies.
+> This is unlike the *number-of-classes* LRT (k vs k-1), whose null lies on the
+> boundary of the parameter space and therefore requires a parametric bootstrap (BLRT).
+> Because freeing the item probabilities adds many parameters over sparse 4-category
+> tables (near-boundary rho estimates are possible), we do not lead with the LRT:
+> as set out above and in the next subsection, the decision leads with BIC and the
+> approximate Bayes factor, and the χ² LRT is reported only as a large-*n* caveat. Running
+> `gofglca(..., test = "boot")` would give a finite-sample robustness check, but it is
+> not needed to license the chi-square test.
+
+```{r}
+#| label: mg-invariance
+#| results: "hold"
+
+k_grid <- c(3, 4, 5)   # focus on the retained k = 4, with neighbours for context
+
+inv_tbl <- purrr::map_dfr(k_grid, function(k) {
+  g_inv  <- tryCatch(fit_mg(k, measure.inv = TRUE),  error = function(e) NULL)
+  g_free <- tryCatch(fit_mg(k, measure.inv = FALSE), error = function(e) NULL)
+  if (is.null(g_inv) || is.null(g_free))
+    return(tibble::tibble(k = k, model = c("invariant","free"), logLik = NA,
+                          npar = NA, AIC = NA, BIC = NA, LRT_stat = NA, LRT_df = NA, LRT_p = NA))
+  ll_i <- gof_get(g_inv, "loglik");  ll_f <- gof_get(g_free, "loglik")
+  np_i <- npar_of(g_inv);            np_f <- npar_of(g_free)
+  ## manual LRT (robust): invariant (measure.inv = TRUE) is nested in free (FALSE),
+  ## so stat = 2*(ll_f - ll_i) must be >= 0 and df = np_f - np_i > 0 at the maxima.
+  stat <- 2 * (ll_f - ll_i)
+  df   <- round(np_f - np_i)
+  if (isTRUE(stat < 0)) {
+    warning(sprintf(
+      "k=%d: free-model logLik (%.2f) < invariant (%.2f). The less-constrained model failed to reach the global max (local optimum); raise n_init before trusting this LRT.",
+      k, ll_f, ll_i))
+    stat <- NA_real_
+  }
+  p <- if (isTRUE(stat >= 0) && isTRUE(df > 0)) stats::pchisq(stat, df = df, lower.tail = FALSE) else NA_real_
+  ## canonical gofglca output (printed separately for the record)
+  cat("\n---- gofglca(invariant, free) at k =", k, "----\n")
+  print(tryCatch(glca::gofglca(g_inv, g_free, test = "chisq"),
+                 error = function(e) paste("gofglca no disponible:", conditionMessage(e))))
+  tibble::tibble(
+    k = k,
+    model  = c("invariant", "free"),
+    logLik = round(c(ll_i, ll_f), 2),
+    npar   = round(c(np_i, np_f)),
+    AIC    = round(c(gof_get(g_inv, "aic"),  gof_get(g_free, "aic")), 2),
+    BIC    = round(c(gof_get(g_inv, "bic"),  gof_get(g_free, "bic")), 2),
+    LRT_stat = c(NA, round(stat, 2)),
+    LRT_df   = c(NA, df),
+    LRT_p    = c(NA, signif(p, 3)))
+})
+readr::write_csv(inv_tbl, "mg_invariance_fit.csv")
+inv_tbl |>
+  knitr::kable("markdown",
+    caption = "Measurement-invariance test at k = 3-5. LRT compares the invariant model (item probs shared) against the free model (item probs differ by setting); the LRT row is shown on the 'free' line. The lead criterion is BIC (with the approximate Bayes factor in the next table): invariance is supported when BIC(invariant) < BIC(free); LRT_p is reported only as a large-n caveat, because at this pooled sample size the chi-square test over-rejects.")
+```
+
+## An analog of Cheng & Rensvold (2002) for LCA: IC differences + Bayes factor
+
+Cheng & Rensvold's **ΔCFI** rule (ΔCFI ≤ −.01 → non-invariance) was designed to
+avoid the large-*n* over-rejection of the χ² difference test. **LCA has no CFI**
+(there is no covariance structure to fit), so the *fit-index-difference* logic is
+carried instead by the **information-criteria differences** (free − invariant) and
+the **BIC-based approximate Bayes factor** — both robust to the sample size that
+makes the LRT above reject almost automatically here. Positive
+Δ**AIC**/Δ**BIC**/Δ**SABIC** favour the **invariant** (parsimonious) model.
+
+**Decision rule** (Raftery, 1995 / Kass & Raftery, 1995, on ΔBIC and the
+approximate BF = exp(ΔBIC/2)): ΔBIC ≥ 2 = *positive*, ≥ 6 = *strong*, ≥ 10 =
+*very strong* evidence **for invariance**; ΔBIC ≤ −2 favours the free model
+(non-invariance). BIC (and CAIC) penalise the free model's many extra parameters
+heavily; AIC/SABIC penalise them less, so those may lean the other way — report the
+spread and lead with BIC/BF, exactly as ΔCFI is preferred over Δχ² in SEM.
+
+```{r}
+#| label: mg-invariance-ic
+#| results: "hold"
+
+## IC differences (free - invariant) and the BIC-based approximate Bayes factor,
+## computed from inv_tbl. SABIC is reconstructed from logLik & npar with the pooled
+## n. POSITIVE dAIC/dBIC/dSABIC and BF > 1 favour the INVARIANT model.
+n_inv <- n_pool
+ic_dec <- inv_tbl |>
+  dplyr::filter(!is.na(BIC)) |>
+  dplyr::group_by(k) |>
+  dplyr::summarise(
+    dAIC   = AIC[model == "free"] - AIC[model == "invariant"],
+    dBIC   = BIC[model == "free"] - BIC[model == "invariant"],
+    dSABIC = (-2 * logLik[model == "free"]      + npar[model == "free"]      * log((n_inv + 2) / 24)) -
+             (-2 * logLik[model == "invariant"] + npar[model == "invariant"] * log((n_inv + 2) / 24)),
+    .groups = "drop") |>
+  dplyr::mutate(
+    BF_raw   = exp(dBIC / 2),                         # BF(invariant vs free)
+    BF       = dplyr::case_when(BF_raw > 100 ~ ">100", BF_raw < 0.01 ~ "<0.01",
+                                TRUE ~ sprintf("%.2f", BF_raw)),
+    Decision = dplyr::case_when(
+      is.na(dBIC) ~ "—",
+      dBIC >= 10  ~ "Invariance supported (very strong)",
+      dBIC >= 6   ~ "Invariance supported (strong)",
+      dBIC >= 2   ~ "Invariance supported (positive)",
+      dBIC > -2   ~ "Ambiguous (|dBIC| < 2)",
+      TRUE        ~ "Non-invariance (free preferred)"),
+    dplyr::across(c(dAIC, dBIC, dSABIC), ~round(.x, 1))) |>
+  dplyr::select(k, dAIC, dBIC, dSABIC, BF, Decision)
+readr::write_csv(ic_dec, "mg_invariance_decision.csv")
+ic_dec |>
+  knitr::kable("markdown",
+    caption = "Cheng-Rensvold analog for LCA measurement invariance: information-criteria differences (free - invariant) and the BIC-based approximate Bayes factor BF = exp(dBIC/2). Positive dAIC/dBIC/dSABIC and BF > 1 favour the INVARIANT (shared-profile) model; the Decision column applies the dBIC/BF rule (>=2 positive, >=6 strong, >=10 very strong for invariance; <=-2 non-invariance). This is robust to the large-n over-rejection of the LRT above.")
+```
+
+# Group-specific prevalences (invariant four-class model)
+
+Under measurement invariance, the two settings share the same four profiles but
+can differ in *how many workers* fall in each. This is the substantive
+"does the mix differ" question.
+
+```{r}
+#| label: mg-prevalences
+#| results: "hold"
+
+g4_inv <- fit_mg(4, measure.inv = TRUE)
+stopifnot(!is.null(g4_inv))
+## PRIVATE: the fitted object contains participant responses and posteriors.
+## Keep its MG filename distinct from Part 2's cache to avoid replacing a model
+## whose raw class order is already used by downstream comparison tables.
+saveRDS(list(g4_inv = g4_inv, n_init = n_init, date = Sys.Date(),
+             items = common_items, group_levels = levels(combo$setting)),
+        "mg_invariant_fit.rds")
+gl     <- levels(combo$setting)
+prev4  <- group_prev(g4_inv, gl)
+
+prev_df <- as.data.frame(round(100 * prev4, 1))
+prev_df$Setting <- rownames(prev_df)
+readr::write_csv(tibble::as_tibble(prev4, rownames = "Setting"),
+                 "mg_prevalence_values.csv")
+prev_df |>
+  dplyr::select(Setting, dplyr::everything()) |>
+  knitr::kable("markdown",
+    caption = "Class prevalences (%) by setting, from the invariant four-class model. Columns C1-C4 are the shared profiles; rows are the two samples. Differences here reflect a different DISTRIBUTION of the same profiles, not different profiles.")
+
+## visual
+prev_long <- prev_df |>
+  tidyr::pivot_longer(dplyr::starts_with("C"), names_to = "Class", values_to = "Prevalence")
+p_prev <- ggplot(prev_long, aes(Class, Prevalence, fill = Setting)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.72) +
+  geom_text(aes(label = sprintf("%.1f", Prevalence)),
+            position = position_dodge(width = 0.8), vjust = -0.3, size = 3) +
+  scale_fill_manual(values = c("General salaried" = "#0072B2", "Hospital HCW" = "#D55E00")) +
+  labs(x = "Latent class (invariant 4-class model)", y = "Prevalence (%)",
+       title = "Profile distribution by setting") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top", panel.grid.major.x = element_blank())
+p_prev
+ggsave("Figure_MG_prevalences.png", p_prev, width = 8, height = 5, dpi = 300, bg = "white")
+```
+
+## What are the four shared profiles? (invariant-model item probabilities)
+
+The prevalence table above only becomes interpretable once we know **what C1–C4
+are**. Because measurement invariance is imposed (`measure.inv = TRUE`), a *single*
+set of item-response probabilities (`rho`) describes both settings, so we print
+them from the **same `g4_inv`** whose prevalences are tabled above and label each
+class **from its `rho`** (data-driven, not guessed from class size). Each item is
+scored by the probability of its two high-frequency categories (*fairly often* +
+*almost always/always*), the metric used throughout this notebook and in Table 3
+of the main analysis.
+
+```{r}
+#| label: mg-invariant-profiles
+#| results: "hold"
+
+## Shared item-response probabilities of the invariant 4-class model (g4_inv).
+## measure.inv = TRUE -> rho is common to both settings, so one profile set fits both.
+rho_inv <- get_rho(g4_inv)                       # 13 items; each a K x 4 rho matrix
+Kinv    <- ncol(get_post_list(g4_inv)[[1]])      # = 4
+t2_inv  <- top2_mat(rho_inv, Kinv)               # top-2 endorsement per item x class
+
+## Family means (mean top-2 by behaviour type) -> the compact, interpretable summary.
+fam_inv <- t(vapply(c("Destructive", "Laissez-faire", "Constructive"),
+             function(ty) colMeans(t2_inv[item_type == ty, , drop = FALSE]), numeric(Kinv)))
+
+## Simple DATA-DRIVEN label per class from its family scores (no hand-coded numbers):
+## constructive/moderately constructive, ambivalent, or disengaged.
+lab_inv <- vapply(seq_len(Kinv), function(k) {
+  con <- fam_inv["Constructive", k]; lf <- fam_inv["Laissez-faire", k]; de <- fam_inv["Destructive", k]
+  if (con >= 0.80 && de < 0.10)        "Constructive"
+  else if (con >= 0.55 && de < 0.10)   "Moderately constructive"
+  else if (de >= 0.08 || lf >= 0.15)   "Ambivalent"
+  else                                 "Disengaged (low on all)"
+}, character(1))
+
+## (a) per-class family scores + label -> THIS is what C1-C4 in the prevalence table are.
+ord_inv <- order(-fam_inv["Constructive", ])     # most -> least constructive
+
+## Manuscript numbering from the behavioral signature (C1 moderately constructive,
+## C2 disengaged, C3 constructive, C4 ambivalent). The raw glca index is arbitrary
+## and must not reach a figure that sits next to Table 2.
+source("../R/canonical_class_numbering.R")
+stopifnot(exists("ms_num"), exists("ms_lab"), exists("ms_order"))
+tibble::tibble(
+  Class             = paste0("C", 1:Kinv),
+  `Constructive %`  = round(fam_inv["Constructive", ] * 100),
+  `*laissez-faire* %` = round(fam_inv["Laissez-faire", ] * 100),
+  `Tyrannical %`   = round(fam_inv["Destructive", ] * 100),
+  Label             = lab_inv)[ord_inv, ] |>
+  knitr::kable("markdown",
+    caption = "Invariant four-class model: family scores (mean top-2 endorsement by behaviour type, %) and a data-driven label for each SHARED profile. This is what C1-C4 in the prevalence table above represent (ordered most to least constructive).")
+
+## (b) full detail: top-2 endorsement per ITEM x class, grouped by behaviour type.
+detail <- data.frame(Item = item_lab, Type = item_type, round(t2_inv * 100),
+                     check.names = FALSE, row.names = NULL)
+colnames(detail)[-(1:2)] <- paste0("C", 1:Kinv)
+readr::write_csv(tibble::tibble(raw_class = seq_len(Kinv),
+                 manuscript_class = ms_num, manuscript_label = ms_lab,
+                 Constructive = fam_inv["Constructive", ],
+                 Laissez_faire = fam_inv["Laissez-faire", ],
+                 Destructive = fam_inv["Destructive", ]), "mg_class_key.csv")
+readr::write_csv(dplyr::bind_cols(
+  tibble::tibble(item = common_items, label = item_lab, type = item_type),
+  tibble::as_tibble(t2_inv, .name_repair = ~paste0("raw_C", seq_along(.x)))),
+  "mg_item_top2_values.csv")
+detail[order(factor(detail$Type, levels = c("Destructive", "Laissez-faire", "Constructive"))), ] |>
+  dplyr::mutate(Type = unname(behavior_text[Type])) |>
+  knitr::kable("markdown",
+    caption = "Invariant four-class model: item-response probabilities (rho, as P of the two high-frequency categories, %) for each item x shared profile, grouped by behaviour type. Confirms the class labels above.")
+```
+
+The figure below shows the **full four-category** item-response probabilities of
+the same shared profiles (Figure-2 grammar of the main analysis), so the shape of
+each class — not just its top-two summary — is visible.
+
+```{r}
+#| label: mg-fig-invariant-profiles
+#| fig-width: 10
+#| fig-height: 7
+#| fig-cap: "Invariant four-class model — full item-response probabilities of the SHARED profiles (item probs held equal across settings). Horizontal stacked bars give P(response category) per item; rows = items grouped by behaviour type; columns = the four shared classes ordered most to least constructive with their data-driven labels. These are the profiles whose group-specific prevalences are compared above."
+cats <- c("Never", "Sometimes", "Fairly often", "Almost always/always")
+blue <- c("#DEEBF7", "#9ECAE1", "#4292C6", "#08519C")
+## column labels = manuscript C# + canonical label, in manuscript order C1 to C4
+lab_cols <- paste0("C", ms_num, "\n", ms_lab)[ms_order]
+
+rho_long_inv <- purrr::map_dfr(seq_along(common_items), function(j) {
+  m <- rho_inv[[j]]                                  # K x 4 (rows = class, cols = category)
+  tidyr::expand_grid(class = 1:Kinv, cat = 1:4) |>
+    dplyr::mutate(p = as.vector(t(m))[(class - 1) * 4 + cat], item = common_items[j])
+}) |>
+  dplyr::mutate(
+    pos   = match(item, common_items),
+    type  = factor(item_type[pos], levels = c("Destructive", "Laissez-faire", "Constructive")),
+    label = factor(item_lab[pos],  levels = rev(item_lab)),
+    cat   = factor(cats[cat], levels = cats),
+    ## levels AND labels both permuted by ms_order -> column order and printed label stay locked
+    class = factor(paste0("C", class), levels = paste0("C", 1:Kinv)[ms_order], labels = lab_cols))
+
+p_inv <- ggplot(rho_long_inv, aes(p, label, fill = cat)) +
+  geom_col(width = .72) +
+  facet_grid(type ~ class, scales = "free_y", space = "free_y", switch = "y",
+             labeller = labeller(type = behavior_labeller)) +
+  scale_fill_manual(values = blue, name = "Response category") +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1),
+                     breaks = c(0, .5, 1), expand = expansion(mult = .04)) +
+  labs(x = "Response-category probability", y = NULL,
+       title = "Invariant four-class model - shared item-response profiles") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "top", panel.spacing.x = unit(.8, "lines"),
+        panel.grid = element_blank(), strip.placement = "outside",
+        strip.text.y.left = element_text(face = "bold", angle = 0))
+p_inv
+ggsave("Figure_MG_invariant_profiles.png", p_inv, width = 10, height = 7, dpi = 300, bg = "white")
+```
+
+# Separate single-group enumeration: do new classes appear?
+
+Fitting each sample **alone** (k = 2-6) asks whether the *number* of classes the
+data prefer differs by setting — and, with the profile comparison below, whether
+qualitatively new profiles emerge in the hospital sample.
+
+```{r}
+#| label: mg-enum-separate
+#| results: "hold"
+
+fit_single <- function(nclass, data) {
+  fit_key <- paste0(as.character(unique(data$setting)), "_k", nclass)
+  stopifnot(length(fit_key) == 1L)
+  if (!fit_key %in% names(separate_fits)) stop("Falta el ajuste previo: ", fit_key)
+  separate_fits[[fit_key]]
+}
+
+enum_by_group <- function(data, label) {
+  n <- nrow(data)
+  purrr::map_dfr(2:6, function(k) {
+    g <- tryCatch(fit_single(k, data), error = function(e) NULL)
+    if (is.null(g)) return(tibble::tibble(Setting = label, k = k,
+                                          logLik = NA_real_, AIC = NA_real_,
+                                          BIC = NA_real_, entropy = NA_real_))
+    ll <- gof_get(g, "loglik"); aic <- gof_get(g, "aic"); bic <- gof_get(g, "bic")
+    tibble::tibble(Setting = label, k = k, logLik = round(ll, 1),
+                   AIC = round(aic, 1), BIC = round(bic, 1),
+                   entropy = round(relative_entropy(get_post_list(g)[[1]]), 3))
+  })
+}
+
+gen_only  <- combo[combo$setting == "General salaried", ]
+hosp_only <- combo[combo$setting == "Hospital HCW", ]
+enum_sep <- dplyr::bind_rows(
+  enum_by_group(gen_only,  "General salaried"),
+  enum_by_group(hosp_only, "Hospital HCW"))
+enum_sep |>
+  knitr::kable("markdown",
+    caption = "Separate single-group enumeration (each sample alone, k = 2-6). Compare the BIC-preferred k across settings; a very different preferred k or shape would indicate the hospital sample needs a different structure.")
+```
+
+# Profile comparison at k = 4 (each sample fitted alone)
+
+Side-by-side item-response profiles let you see whether the four profiles *look*
+the same in both settings. Because latent-class labels are arbitrary
+(label switching), within each setting the four classes are ordered by their mean
+constructive endorsement (strongest constructive first), which roughly aligns
+them for visual comparison; verify the alignment against the numbers.
+
+```{r}
+#| label: mg-profile-comparison
+#| fig-width: 13
+#| fig-height: 7
+#| results: "hold"
+
+## item_type / item_lab are defined once in the `item-meta` chunk above (reused here).
+
+## order a fitted 4-class model's classes by mean constructive endorsement (desc)
+order_by_constructive <- function(g) {
+  K <- length(get_post_list(g)[[1]][1, ]); rho <- get_rho(g)
+  t2 <- top2_mat(rho, K)
+  cs <- colMeans(t2[item_type == "Constructive", , drop = FALSE])
+  order(cs, decreasing = TRUE)
+}
+
+profile_tbl <- function(g, label) {
+  K <- ncol(get_post_list(g)[[1]]); rho <- get_rho(g)
+  t2 <- top2_mat(rho, K)[, order_by_constructive(g), drop = FALSE]
+  colnames(t2) <- paste0(label, " P", seq_len(K))
+  tibble::tibble(item = item_lab, type = item_type) |> dplyr::bind_cols(as.data.frame(round(t2, 2)))
+}
+
+g4_gen  <- fit_single(4, gen_only)
+g4_hosp <- fit_single(4, hosp_only)
+stopifnot(!is.null(g4_gen), !is.null(g4_hosp))
+## PRIVATE: reusable fits contain participant responses and posterior rows.
+saveRDS(list(g4_gen = g4_gen, g4_hosp = g4_hosp, n_init = n_init,
+             date = Sys.Date(), items = common_items), "mg_separate_fits.rds")
+
+comp <- dplyr::left_join(profile_tbl(g4_gen, "Gen"), profile_tbl(g4_hosp, "Hosp"),
+                         by = c("item", "type"))
+comp |>
+  dplyr::mutate(type = unname(behavior_text[type])) |>
+  knitr::kable("markdown",
+    caption = "Top-2 endorsement (categories 3+4) per item for the four-class model fitted SEPARATELY in each setting, classes ordered by constructive endorsement (P1 = strongest constructive ... P4 = least). Compare columns Gen P1-P4 vs Hosp P1-P4 to judge whether the profiles match.")
+
+## faceted figure: profile (ordered) x setting. Build long form explicitly so
+## column names are unambiguous (no reliance on parse_number / tidyselect guesses).
+long_one <- function(g, label) {
+  K <- ncol(get_post_list(g)[[1]]); rho <- get_rho(g)
+  t2 <- top2_mat(rho, K)[, order_by_constructive(g), drop = FALSE]
+  df <- data.frame(item = factor(item_lab, levels = rev(item_lab)),
+                   type = factor(item_type, levels = c("Destructive","Laissez-faire","Constructive")))
+  for (p in seq_len(K)) df[[paste0("P", p)]] <- t2[, p]
+  tidyr::pivot_longer(df, dplyr::starts_with("P"), names_to = "cls", values_to = "p") |>
+    dplyr::mutate(setting = label)
+}
+fig_df <- dplyr::bind_rows(long_one(g4_gen, "General salaried"),
+                           long_one(g4_hosp, "Hospital HCW"))
+p_profiles <- ggplot(fig_df, aes(p, item, fill = type)) +
+  geom_col(width = 0.7) +
+  facet_grid(. ~ setting + cls) +
+  scale_fill_manual(values = c("Destructive" = "#D55E00", "Laissez-faire" = "#E69F00",
+                               "Constructive" = "#0072B2"),
+                    labels = function(values) parse(text = unname(behavior_labels[values]))) +
+  scale_x_continuous(breaks = c(0, .5, 1), labels = c("0", "", "100")) +
+  labs(x = "Top-2 endorsement (%)", y = NULL, fill = "Behavior type",
+       title = "Four-class profiles fitted separately in each setting (classes ordered by constructive endorsement)") +
+  theme_minimal(base_size = 10) +
+  theme(legend.position = "top", panel.grid.major.y = element_blank(),
+        panel.spacing.x = unit(0.6, "lines"), strip.text = element_text(size = 8))
+p_profiles
+ggsave("Figure_MG_profile_comparison.png", p_profiles, width = 13, height = 7, dpi = 300, bg = "white")
+```
+
+# Verdict
+
+```{r}
+#| label: mg-verdict
+#| results: "asis"
+
+## Assemble a compact, data-driven verdict from the objects computed above.
+bic_inv4  <- inv_tbl$BIC[inv_tbl$k == 4 & inv_tbl$model == "invariant"]
+bic_free4 <- inv_tbl$BIC[inv_tbl$k == 4 & inv_tbl$model == "free"]
+p_lrt4    <- inv_tbl$LRT_p[inv_tbl$k == 4 & inv_tbl$model == "free"]
+## Lead criterion = BIC / approximate Bayes factor (the Cheng-Rensvold analog),
+## robust to the large-n over-rejection of the chi-square LRT. dBIC4 = BIC(free) -
+## BIC(invariant); >= 2 positive, >= 6 strong, >= 10 very strong evidence FOR
+## invariance. p_lrt4 is retained only for the caveat (p_lrt4_disp below), NOT the rule.
+dBIC4     <- bic_free4 - bic_inv4
+inv_ok    <- isTRUE(dBIC4 >= 6)
+## Display-only format for the LRT p (options(scipen=999) would otherwise print a
+## tiny p as a long fixed-notation string). Keeps p_lrt4 numeric for inv_ok above.
+p_lrt4_disp <- if (length(p_lrt4) == 1 && !is.na(p_lrt4))
+                 (if (p_lrt4 < 0.001) "<0.001" else sprintf("%.3f", p_lrt4)) else "NA"
+
+pick <- function(kvec, bicvec) { i <- which.min(bicvec); if (length(i)) kvec[i] else NA }
+bic_pooled_min_k <- pick(enum_pooled$k, enum_pooled$BIC)
+gen_best  <- pick(enum_sep$k[enum_sep$Setting == "General salaried"], enum_sep$BIC[enum_sep$Setting == "General salaried"])
+hosp_best <- pick(enum_sep$k[enum_sep$Setting == "Hospital HCW"],   enum_sep$BIC[enum_sep$Setting == "Hospital HCW"])
+
+cat(sprintf(paste0(
+  "- **Pooled enumeration:** BIC is minimised at k = %s in the two-group data.\n",
+  "- **Measurement invariance (k = 4):** lead criterion BIC(invariant) = %s < BIC(free) = %s (ΔBIC = %s favouring the shared-profile model) -> invariance %s. The chi-square LRT (p = %s) rejects, but this reflects the large pooled sample over-powering the deviance test, not substantive non-invariance; AIC/SABIC (lighter penalties) and the LRT lean toward the free model, and at k = 3 BIC itself prefers free.\n",
+  "- **Separate enumeration:** BIC-preferred k is %s (general) and %s (hospital).\n",
+  "- **Reading:** if invariance holds, the four profiles are shared across settings (robust to place/occupation) and the two samples differ mainly in prevalences (table above). If it is rejected, inspect the profile-comparison table/figure to see which profiles differ and whether the hospital sample needs an extra class.\n"),
+  bic_pooled_min_k,
+  ifelse(length(bic_inv4), bic_inv4, NA), ifelse(length(bic_free4), bic_free4, NA),
+  ifelse(length(dBIC4), round(dBIC4, 1), NA),
+  ifelse(inv_ok, "SUPPORTED", "NOT clearly supported"),
+  p_lrt4_disp,
+  gen_best, hosp_best))
+```
+
+```{r}
+#| label: mg-session
+#| results: "hold"
+sessionInfo()
+```
+
+
+# Punto de control para la etapa 03
+
+```{r}
+#| label: mg-checkpoint-export
+#| results: hold
+expected_mg <- c(paste0("invariant_k", 2:6), paste0("free_k", 3:5))
+expected_single <- unlist(lapply(levels(combo$setting), function(group_label)
+  paste0(group_label, "_k", 2:6)))
+stopifnot(all(expected_mg %in% names(measurement_fits)),
+          all(expected_single %in% names(separate_fits)),
+          all(vapply(measurement_fits[expected_mg], function(fit) !is.null(fit), logical(1))),
+          all(vapply(separate_fits[expected_single], function(fit) !is.null(fit), logical(1))))
+class_key <- tibble::tibble(raw_class = seq_len(Kinv), manuscript_class = ms_num,
+                           manuscript_label = ms_lab,
+                           Constructive = fam_inv["Constructive", ],
+                           Laissez_faire = fam_inv["Laissez-faire", ],
+                           Destructive = fam_inv["Destructive", ])
+hospital <- list(
+  schema_version = 1L,
+  g4_inv = g4_inv,
+  input = measurement_input,
+  fits = list(
+    pooled = measurement_fits[intersect(paste0("invariant_k", 1:6), names(measurement_fits))],
+    invariance = measurement_fits[c(paste0("invariant_k", 3:5), paste0("free_k", 3:5))],
+    separate = separate_fits[expected_single]),
+  tables = list(sample_sizes = sizes_tbl, enumeration_pooled = enum_pooled,
+                invariance_fit = inv_tbl, invariance_decision = ic_dec,
+                prevalence = prev4, item_top2 = t2_inv, class_key = class_key,
+                enumeration_separate = enum_sep),
+  n_init = n_init, seed = 2125L,
+  items = common_items, group_levels = levels(combo$setting),
+  metadata = list(item_type = item_type, item_lab = item_lab,
+                  general_items = gen_items, hospital_items = hosp_items),
+  provenance = list(created = Sys.time(), input_paths = c(general = gen_path, hospital = hosp_path),
+                    input_hash = input_hash, model_input_hash = model_input_hash,
+                    code_hash = code_hash, session = sessionInfo()))
+save(hospital, file = "02_hospital.RData", compress = "xz")
+cat("Guardado 02_hospital.RData; objeto único: hospital.\n")
+```

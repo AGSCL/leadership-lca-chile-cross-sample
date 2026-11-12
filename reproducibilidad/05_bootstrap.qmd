@@ -1,0 +1,175 @@
+---
+title: "05. Shared-measurement bootstrap for weighted associations"
+date: last-modified
+format:
+  html:
+    toc: true
+    code-fold: true
+    embed-resources: true
+execute:
+  error: false
+  cache: false
+  freeze: false
+---
+
+```{r}
+#| label: bootstrap-directory
+#| include: false
+dir.create("salidas", showWarnings = FALSE)
+knitr::opts_knit$set(root.dir = normalizePath("salidas", winslash = "/", mustWork = TRUE))
+```
+
+## Scope
+
+Run stages 02 and 03 first. This stage resamples participants uniformly with
+replacement within each setting, carries their final weights, refits the shared
+four-class measurement model, aligns its classes, reconstructs classification
+errors, and refits both sample-specific association models. Each ratio of odds
+ratios uses the paired coefficient difference from the same replicate.
+
+The measurement model is unweighted; general-sample association models use
+poststratification weights and hospital models use unit weights. The new eight-variable
+specification replaces job satisfaction with flexible-coded psychotropic use.
+The two previous adjustment sets are retained as sensitivities.
+
+The agreed final run uses **B=250**, with **4000 random starts** per measurement refit.
+Successful replicates and failures are saved separately in a signature-specific
+private directory. Re-running identical inputs resumes that directory. Failed
+replicates are not silently replaced by new samples. Do not run two copies at once.
+
+```{r}
+#| label: bootstrap-setup
+required <- c("glca", "digest", "future", "furrr", "knitr")
+stopifnot(all(vapply(required, requireNamespace, logical(1), quietly = TRUE)))
+source("../R/association_models.R")
+source("../R/bootstrap_shared.R")
+check_association_models()
+check_bootstrap_shared()
+read_one <- function(path, name) {
+  checkpoint <- new.env(parent = emptyenv())
+  stopifnot(identical(load(path, envir = checkpoint), name))
+  checkpoint[[name]]
+}
+hospital <- read_one("02_hospital.RData", "hospital")
+asociaciones <- read_one("03_asociaciones.RData", "asociaciones")
+stopifnot(identical(asociaciones$measurement$hash,
+                    unname(tools::md5sum("02_hospital.RData"))))
+positive_integer <- function(variable, default) {
+  value <- suppressWarnings(as.numeric(Sys.getenv(variable, as.character(default))))
+  if (length(value) != 1L || !is.finite(value) || value < 1 || value != floor(value))
+    stop(variable, " must be a positive integer")
+  as.integer(value)
+}
+replicates <- positive_integer("LCA_BOOTSTRAP_B", 250L)
+starts <- positive_integer("LCA_BOOTSTRAP_STARTS", 4000L)
+workers <- positive_integer("LCA_WORKERS", 6L)
+warm_start <- identical(Sys.getenv("LCA_BOOTSTRAP_WARM", "0"), "1")
+if (replicates != 250L || starts != 4000L || warm_start)
+  cat("NONDEFAULT RUN: report exact B, start count and initialization; do not label it the default final procedure.\n")
+```
+
+```{r}
+#| label: bootstrap-run
+#| results: hold
+bootstrap <- run_shared_bootstrap(
+  input = asociaciones$covariates[c("general", "hospital")],
+  reference_model = hospital$g4_inv,
+  specifications = asociaciones$specifications,
+  reference_class = asociaciones$measurement$reference_raw,
+  replicates = replicates, starts = starts, workers = workers,
+  warm_start = warm_start)
+bootstrap$status <- if (bootstrap$requested == 250L && bootstrap$valid == 250L &&
+                        bootstrap$failed == 0L) "complete" else "draft_or_incomplete"
+bootstrap$association_hash <- unname(tools::md5sum("03_asociaciones.RData"))
+class_key <- asociaciones$measurement$class_key
+matched_class <- match(bootstrap$summary$class, class_key$raw_class)
+stopifnot(!anyNA(matched_class))
+bootstrap$summary$raw_class <- bootstrap$summary$class
+bootstrap$summary$class <- class_key$manuscript_class[matched_class]
+bootstrap$summary$profile <- class_key$manuscript_label[matched_class]
+bootstrap$summary$reference_class <- class_key$manuscript_class[
+  match(asociaciones$measurement$reference_raw, class_key$raw_class)]
+## 2026-10-18: standard Benjamini-Hochberg and two-stage adaptive
+## Benjamini-Krieger-Yekutieli (2006) q-values over each specification's
+## bootstrap Wald P-values for log ROR (24 contrasts), as Holm already is.
+bky_reject <- function(p, q) {
+  stage1 <- q / (1 + q)
+  rejected1 <- sum(stats::p.adjust(p, "BH") <= stage1)
+  if (rejected1 == 0L) return(rep(FALSE, length(p)))
+  if (rejected1 == length(p)) return(rep(TRUE, length(p)))
+  stats::p.adjust(p, "BH") <= stage1 * length(p) / (length(p) - rejected1)
+}
+## BKY q-value: smallest level on a 1e-4 grid at which the procedure rejects.
+bky_q <- function(p, grid = seq(1e-4, 1, by = 1e-4)) {
+  rejected <- vapply(grid, function(q) bky_reject(p, q), logical(length(p)))
+  apply(rejected, 1L, function(row) if (any(row)) grid[which(row)[1L]] else 1)
+}
+ror_rows <- bootstrap$summary$estimand == "log_ROR"
+bootstrap$summary$q_bh <- bootstrap$summary$q_bky <- NA_real_
+for (specification in unique(bootstrap$summary$specification[ror_rows])) {
+  family <- ror_rows & bootstrap$summary$specification == specification
+  p <- bootstrap$summary$p_wald_bootstrap[family]
+  bootstrap$summary$q_bh[family] <- stats::p.adjust(p, "BH")
+  bootstrap$summary$q_bky[family] <- bky_q(p)
+  stopifnot(!anyNA(p), identical(bootstrap$summary$q_bky[family] <= 0.05, bky_reject(p, 0.05)))
+}
+stopifnot(sum(ror_rows & bootstrap$summary$specification == "main") == 24L)
+bootstrap$summary$run_status <- bootstrap$status
+bootstrap$summary$B_requested <- bootstrap$requested
+save(bootstrap, file = "05_bootstrap.RData", compress = "xz")
+utils::write.csv(bootstrap$summary, "bootstrap_associations.csv", row.names = FALSE)
+diagnostics <- do.call(rbind, lapply(bootstrap$replicates, function(result)
+  data.frame(replicate = result$replicate, status = result$status,
+    elapsed_seconds = result$elapsed_seconds,
+    error = if (is.null(result$error)) "" else result$error)))
+utils::write.csv(diagnostics, "bootstrap_replicate_status.csv", row.names = FALSE)
+cat("Requested:", bootstrap$requested, "; valid:", bootstrap$valid,
+    "; failed:", bootstrap$failed, "; status:", bootstrap$status, "\n")
+```
+
+## Ratio of odds ratios
+
+Intervals are percentile bootstrap intervals on the log scale, exponentiated.
+The optional P-value is an approximate Wald test using the bootstrap standard
+deviation of the paired log-ROR, not the proportion of bootstrap draws exceeding
+one. Holm, standard Benjamini-Hochberg (q_bh) and two-stage adaptive
+Benjamini-Krieger-Yekutieli (q_bky) corrections apply to the 24 main contrasts,
+separately from sensitivity families. These quantities do not remove noncollapsibility.
+
+```{r}
+#| label: bootstrap-ror-table
+main_ror <- subset(bootstrap$summary, specification == "main" & estimand == "log_ROR")
+if (bootstrap$status == "complete") {
+  knitr::kable(main_ror[, c("covariate", "class", "profile", "reference_class", "estimate", "lower", "upper",
+                            "bootstrap_se", "p_wald_bootstrap", "p_holm", "q_bh", "q_bky", "n_valid")], digits = 3,
+    caption = "Proposed main association specification: hospital/general ROR, manuscript class numbering; constructive profile is the reference.")
+} else {
+  cat("DRAFT OR INCOMPLETE RUN: no inferential table is displayed. B=250 has not been completed.\n")
+  print(diagnostics)
+}
+knitr::kable(class_key[, c("raw_class", "manuscript_class", "manuscript_label")],
+  caption = "Verified raw-to-manuscript class key")
+```
+
+## Predicted probabilities
+
+The export also includes predicted probabilities and exposed-minus-unexposed
+differences for each binary covariate in the new specification. Predictions are
+averaged over each setting's own complete-case covariate distribution, weighted
+in the general sample. They are descriptive model-based associations, not causal
+effects or standardization to one common target population.
+
+## Brief limitation
+
+Bootstrap inference incorporates shared measurement uncertainty but cannot account
+for unidentified participant overlap or unavailable survey-design and
+weight-calibration information.
+
+The number of classes and the measurement-invariance decision are held fixed.
+Individual resampling does not reconstruct unavailable PSU/stratum information,
+hospital clustering or calibration of estimated weights.
+
+```{r}
+#| label: bootstrap-session
+sessionInfo()
+```
